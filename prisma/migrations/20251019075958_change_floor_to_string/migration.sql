@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "units" ALTER COLUMN "floor" SET DATA TYPE TEXT;

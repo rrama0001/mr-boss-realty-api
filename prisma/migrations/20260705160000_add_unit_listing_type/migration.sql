@@ -1,0 +1,5 @@
+ALTER TABLE "units"
+ADD COLUMN "listing_type" TEXT NOT NULL DEFAULT 'sale',
+ADD COLUMN "monthly_rent" DOUBLE PRECISION,
+ADD COLUMN "daily_rent" DOUBLE PRECISION,
+ADD COLUMN "hourly_rent" DOUBLE PRECISION;

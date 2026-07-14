@@ -1,0 +1,15 @@
+{
+    "watch": [
+        "server.js",
+        "routes",
+        "controllers",
+        "services",
+        "middlewares",
+        "config",
+        "scripts"
+    ],
+    "ext": "js,json",
+    "ignore": ["node_modules/**", "prisma/migrations/**", "uploads/**", ".dev-server.lock"],
+    "signal": "SIGINT",
+    "delay": 500
+}

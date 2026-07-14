@@ -1,0 +1,228 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model users {
+  id             Int      @id @default(autoincrement())
+  username       String
+  email          String   @unique
+  password       String?
+  role           String   @default("user")
+  can_login      Boolean  @default(true)
+  created_at     DateTime @default(now())
+  email_verified Boolean  @default(false)
+  provider       String?
+  provider_id    String?
+  updated_at     DateTime @updatedAt
+}
+
+model assets {
+  id            Int      @id @default(autoincrement())
+  project_id    Int
+  unit_id       Int?
+  kind          String?
+  image_label   String?
+  image_link    String?
+  video_link    String?
+  document_link String?
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+  projects      projects @relation(fields: [project_id], references: [id])
+  units         units?   @relation(fields: [unit_id], references: [id])
+}
+
+model buildings {
+  id                      Int            @id @default(autoincrement())
+  project_id              Int
+  building_type           String?
+  building_name           String?
+  number_of_units         Int?
+  lts_completion_date     DateTime?
+  cts_completion_date     DateTime?
+  total_available_units   Int?
+  total_parking           Int?
+  total_available_parking Int?
+  created_at              DateTime       @default(now())
+  updated_at              DateTime       @updatedAt
+  freebies                String?
+  status                  String?
+  is_whole_property_listing Boolean        @default(false)
+  listing_type            String?
+  sale_price              Float?
+  monthly_rent            Float?
+  daily_rent              Float?
+  hourly_rent             Float?
+  bedrooms                Int?
+  bathrooms               Int?
+  stories                 Int?
+  total_floor_area        String?
+  typical_room_area       String?
+  lot_area                String?
+  payment_terms           String?
+  payment_terms_link      String?
+  reservation_fee         Float?
+  is_reservation_deductible Boolean?
+  monthly_dues            Float?
+  monthly_dues_per_sqm    Float?
+  is_pet_allowed          Boolean?
+  allowed_pet_size        String?
+  is_allowed_smoking      Boolean?
+  images_videos_link      String?
+  slug                    String?        @unique
+  projects                projects       @relation(fields: [project_id], references: [id])
+  deliverables            deliverables[]
+  units                   units[]
+}
+
+model deliverables {
+  id          Int        @id @default(autoincrement())
+  project_id  Int
+  building_id Int?
+  unit_id     Int?
+  item        String
+  item_type   String?
+  created_at  DateTime   @default(now())
+  updated_at  DateTime   @updatedAt
+  buildings   buildings? @relation(fields: [building_id], references: [id])
+  projects    projects   @relation(fields: [project_id], references: [id])
+  units       units?     @relation(fields: [unit_id], references: [id])
+}
+
+model projects {
+  id                       Int            @id @default(autoincrement())
+  project_name             String
+  slug                     String?        @unique
+  developer                String?
+  developer_website        String?
+  developer_notes          String?
+  city                     String?
+  location                 String?
+  description              String?
+  loan_type                String?
+  reservation_requirements String?
+  contact_person           String?
+  contact_person_position  String?
+  contact_person_number    String?
+  contact_person_email     String?
+  created_at               DateTime       @default(now())
+  updated_at               DateTime       @updatedAt
+  amenities                String?
+  images_videos_link       String?
+  showroom_location        String?
+  status                   String?
+  is_featured              Boolean        @default(false)
+  featured_sort_order      Int?
+  is_private_on_website    Boolean        @default(false)
+  assets                   assets[]
+  buildings                buildings[]
+  deliverables             deliverables[]
+  units                    units[]
+}
+
+model units {
+  id                        Int            @id @default(autoincrement())
+  project_id                Int
+  building_id               Int
+  slug                      String?        @unique
+  room_number               String
+  unit_type                 String
+  unit_size                 String?
+  bedrooms                  Int?
+  bathrooms                 Int?
+  payment_terms             String?
+  payment_terms_link        String?
+  reservation_fee           Float?
+  is_reservation_deductible Boolean?
+  monthly_dues_per_sqm      Float?
+  monthly_dues              Float?
+  is_pet_allowed            Boolean?
+  allowed_pet_size          String?
+  is_allowed_smoking        Boolean?
+  ai_notes                  String?
+  created_at                DateTime       @default(now())
+  updated_at                DateTime       @updatedAt
+  unit_price                Float?
+  listing_type              String         @default("sale")
+  monthly_rent              Float?
+  daily_rent                Float?
+  hourly_rent               Float?
+  floor                     Int
+  images_videos_link        String?
+  cover_image_url           String?
+  assets                    assets[]
+  deliverables              deliverables[]
+  buildings                 buildings      @relation(fields: [building_id], references: [id])
+  projects                  projects       @relation(fields: [project_id], references: [id])
+}
+
+model unit_types {
+  id         Int      @id @default(autoincrement())
+  name       String   @unique
+  sort_order Int      @default(0)
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+model building_types {
+  id         Int      @id @default(autoincrement())
+  name       String   @unique
+  sort_order Int      @default(0)
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+model ai_settings {
+  id          Int      @id @default(1)
+  model       String
+  prompt      String
+  temperature Float
+  max_tokens  Int
+  updated_at  DateTime @updatedAt
+  created_at  DateTime @default(now())
+}
+
+model company_profile {
+  id              Int      @id @default(1)
+  company_name    String?
+  tagline         String?
+  email           String?
+  phone           String?
+  whatsapp        String?
+  address         String?
+  city            String?
+  business_hours  String?
+  facebook_url    String?
+  messenger_url   String?
+  instagram_url   String?
+  website_url     String?
+  maps_url        String?
+  legal_name      String?
+  privacy_email   String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+}
+
+model leads {
+  id                Int      @id @default(autoincrement())
+  contact_hash      String
+  contact_encrypted String?
+  contact_last4     String?
+  inquiry_message   String?
+  building_ref      String?
+  unit_ref          String?
+  source            String   @default("website")
+  verified_at       DateTime @default(now())
+  created_at        DateTime @default(now())
+
+  @@index([contact_hash])
+  @@index([verified_at])
+  @@index([building_ref])
+}
