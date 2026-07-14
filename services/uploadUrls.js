@@ -31,6 +31,26 @@ function normalizeStoredUploadUrl(url) {
     return value.replace(/\/api\/uploads\//gi, '/uploads/');
 }
 
+/**
+ * Comparable key for upload URLs across absolute/relative and host differences.
+ * e.g. http://localhost:3000/uploads/a.jpg and /uploads/a.jpg -> uploads/a.jpg
+ */
+function uploadUrlKey(url) {
+    const normalized = normalizeStoredUploadUrl(url);
+    if (!normalized) return '';
+
+    try {
+        if (/^https?:\/\//i.test(normalized)) {
+            const { pathname } = new URL(normalized);
+            return pathname.replace(/^\/+/, '').toLowerCase();
+        }
+    } catch {
+        // fall through
+    }
+
+    return normalized.replace(/^\/+/, '').toLowerCase();
+}
+
 function uploadPathnameToRelative(pathname) {
     const pathValue = String(pathname || '');
     if (pathValue.startsWith('/api/uploads/')) {
@@ -66,6 +86,7 @@ module.exports = {
     getApiPublicBaseUrl,
     getPublicUploadUrl,
     normalizeStoredUploadUrl,
+    uploadUrlKey,
     deleteStoredUploadFile,
     isUnitOwnedUploadUrl,
     uploadPathnameToRelative,

@@ -32,9 +32,10 @@ const {
   createGalleryAsset,
   updateGalleryLabel,
   removeGalleryAsset,
+  replaceGalleryImage,
   countUnitReferencesToImageUrl,
 } = require('../services/projectGallery');
-const { getPublicUploadUrl, normalizeStoredUploadUrl } = require('../services/uploadUrls');
+const { getPublicUploadUrl, normalizeStoredUploadUrl, uploadUrlKey } = require('../services/uploadUrls');
 const { pickUnitImage } = require('../services/unitAssets');
 
 function mapGalleryAsset(asset) {
@@ -201,8 +202,8 @@ function formatPublicProjectDetail(project) {
 }
 
 function pickProjectImage(project) {
-  if (isShareableMediaUrl(project.images_videos_link)) {
-    return normalizeStoredUploadUrl(project.images_videos_link.trim());
+  if (isShareableMediaUrl(project.cover_image_url)) {
+    return normalizeStoredUploadUrl(project.cover_image_url.trim());
   }
 
   const galleryImage = (project.assets || []).find(
@@ -213,6 +214,10 @@ function pickProjectImage(project) {
 
   if (galleryImage) {
     return normalizeStoredUploadUrl(galleryImage.trim());
+  }
+
+  if (isShareableMediaUrl(project.images_videos_link)) {
+    return normalizeStoredUploadUrl(project.images_videos_link.trim());
   }
 
   const assetImage = (project.assets || []).find(
@@ -457,6 +462,7 @@ exports.getOne = async (req, res) => {
 
     res.json({
       ...project,
+      cover_image_url: normalizeStoredUploadUrl(project.cover_image_url || '') || null,
       logo_url,
       gallery_images: gallery_images.map(mapGalleryAsset),
     });
@@ -540,6 +546,32 @@ exports.uploadGallery = async (req, res) => {
       return res.status(404).json({ error: 'Property not found.' });
     }
 
+    const replaceAssetId = parseInt(String(req.body?.replace_asset_id || ''), 10);
+    if (Number.isFinite(replaceAssetId) && replaceAssetId > 0) {
+      if (req.files.length !== 1) {
+        return res.status(400).json({ error: 'Crop replace expects exactly one image.' });
+      }
+
+      const file = req.files[0];
+      const relativePath = path.posix.join('projects', String(projectId), 'gallery', file.filename);
+      const publicUrl = getPublicUploadUrl(relativePath);
+      const asset = await replaceGalleryImage(replaceAssetId, projectId, publicUrl);
+      if (!asset) {
+        return res.status(404).json({ error: 'Gallery image not found.' });
+      }
+
+      const refreshed = await prisma.projects.findUnique({
+        where: { id: projectId },
+        select: { cover_image_url: true },
+      });
+
+      return res.json({
+        image: mapGalleryAsset(asset),
+        cover_image_url: normalizeStoredUploadUrl(refreshed?.cover_image_url || '') || null,
+        replaced_asset_id: replaceAssetId,
+      });
+    }
+
     const labels = parseGalleryLabels(req.body?.labels);
     const created = [];
 
@@ -600,10 +632,67 @@ exports.deleteGalleryImage = async (req, res) => {
       });
     }
 
+    const project = await prisma.projects.findUnique({
+      where: { id: projectId },
+      select: { cover_image_url: true },
+    });
+    const coverUrl = normalizeStoredUploadUrl(project?.cover_image_url || '');
+    const deletedUrl = normalizeStoredUploadUrl(asset.image_link || '');
+    const coverMatchesDeleted = coverUrl && deletedUrl && uploadUrlKey(coverUrl) === uploadUrlKey(deletedUrl);
+
     await removeGalleryAsset(assetId, projectId);
+
+    if (coverMatchesDeleted) {
+      await prisma.projects.update({
+        where: { id: projectId },
+        data: { cover_image_url: null },
+      });
+    }
+
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting property gallery image:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.setCoverImage = async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id, 10);
+    const rawCover = String(req.body?.cover_image_url || '').trim();
+    const coverKey = rawCover ? uploadUrlKey(rawCover) : '';
+
+    const project = await prisma.projects.findUnique({ where: { id: projectId } });
+    if (!project) {
+      return res.status(404).json({ error: 'Property not found.' });
+    }
+
+    let coverUrl = null;
+    if (coverKey) {
+      const gallery = await listProjectGallery(projectId);
+      const matched = gallery.find(
+        (asset) => uploadUrlKey(asset.image_link || '') === coverKey,
+      );
+      if (!matched) {
+        return res.status(400).json({
+          error: 'Cover image must be one of this property\'s gallery images.',
+        });
+      }
+      // Persist the canonical gallery URL from storage, not a client-rewritten path.
+      coverUrl = normalizeStoredUploadUrl(matched.image_link || '') || null;
+    }
+
+    const updated = await prisma.projects.update({
+      where: { id: projectId },
+      data: { cover_image_url: coverUrl },
+      select: { id: true, cover_image_url: true },
+    });
+
+    res.json({
+      cover_image_url: normalizeStoredUploadUrl(updated.cover_image_url || '') || null,
+    });
+  } catch (err) {
+    console.error('Error setting property cover image:', err);
     res.status(500).json({ error: err.message });
   }
 };

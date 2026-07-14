@@ -28,6 +28,7 @@ const unitInclude = {
       is_private_on_website: true,
       amenities: true,
       images_videos_link: true,
+      cover_image_url: true,
       assets: {
         select: { image_link: true, unit_id: true, updated_at: true },
       },
@@ -56,12 +57,17 @@ const wholeBuildingProjectSelect = {
   is_private_on_website: true,
   amenities: true,
   images_videos_link: true,
+  cover_image_url: true,
   assets: {
     select: { image_link: true, unit_id: true, updated_at: true },
   },
 };
 
 function pickProjectImageFromRecord(project = {}) {
+  if (isShareableMediaUrl(project.cover_image_url)) {
+    return normalizeStoredUploadUrl(project.cover_image_url.trim());
+  }
+
   if (isShareableMediaUrl(project.images_videos_link)) {
     return normalizeStoredUploadUrl(project.images_videos_link.trim());
   }

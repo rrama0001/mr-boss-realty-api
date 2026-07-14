@@ -114,6 +114,7 @@ model projects {
   updated_at               DateTime       @updatedAt
   amenities                String?
   images_videos_link       String?
+  cover_image_url          String?
   showroom_location        String?
   status                   String?
   is_featured              Boolean        @default(false)

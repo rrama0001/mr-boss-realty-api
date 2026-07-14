@@ -40,6 +40,7 @@ router.post('/:id/gallery', (req, res, next) => {
 }, projectController.uploadGallery);
 router.patch('/:id/gallery/:assetId', projectController.updateGalleryImage);
 router.delete('/:id/gallery/:assetId', projectController.deleteGalleryImage);
+router.patch('/:id/cover', projectController.setCoverImage);
 router.post('/', projectController.create);
 router.put('/:id', projectController.update);
 router.delete('/:id', projectController.remove);

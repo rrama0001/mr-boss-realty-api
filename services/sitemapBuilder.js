@@ -28,6 +28,10 @@ function resolveBuildingListingRef(building = {}) {
 }
 
 function pickProjectHeroImage(project = {}) {
+    if (isShareableMediaUrl(project.cover_image_url)) {
+        return normalizeStoredUploadUrl(project.cover_image_url.trim());
+    }
+
     if (isShareableMediaUrl(project.images_videos_link)) {
         return normalizeStoredUploadUrl(project.images_videos_link.trim());
     }
@@ -133,6 +137,7 @@ async function buildProjectEntries() {
             is_private_on_website: true,
             updated_at: true,
             images_videos_link: true,
+            cover_image_url: true,
             assets: {
                 select: {
                     image_link: true,
