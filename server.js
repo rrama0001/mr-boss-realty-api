@@ -44,7 +44,10 @@ app.set('trust proxy', 1);
 // ✅ Public SEO routes (sitemap + robots) — generated dynamically from the database
 app.use('/', require('./routes/sitemap'));
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+const uploadsRoot = path.join(__dirname, 'uploads');
+// Canonical public path. Also mount under /api/uploads for legacy URLs when API_URL included /api.
+app.use('/uploads', express.static(uploadsRoot));
+app.use('/api/uploads', express.static(uploadsRoot));
 
 // ✅ Session setup (for Passport)
 // Works on both local development and production

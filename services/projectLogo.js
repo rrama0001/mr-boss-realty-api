@@ -2,7 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { prisma } = require('../prisma/prismaClient');
 const { isShareableMediaUrl } = require('./aiPropertySnapshot');
-const { getUploadsRoot } = require('./uploadUrls');
+const { getUploadsRoot, uploadPathnameToRelative } = require('./uploadUrls');
 
 const ASSET_KIND_LOGO = 'logo';
 
@@ -47,9 +47,9 @@ async function deleteStoredLogoFile(imageLink) {
 
     try {
         const { pathname } = new URL(imageLink);
-        if (!pathname.startsWith('/uploads/')) return;
+        const relativePath = uploadPathnameToRelative(pathname);
+        if (!relativePath) return;
 
-        const relativePath = pathname.replace(/^\/uploads\//, '');
         const filePath = path.join(getUploadsRoot(), relativePath);
         await fs.unlink(filePath);
     } catch {
