@@ -34,13 +34,13 @@ const {
   removeGalleryAsset,
   countUnitReferencesToImageUrl,
 } = require('../services/projectGallery');
-const { getPublicUploadUrl } = require('../services/uploadUrls');
+const { getPublicUploadUrl, normalizeStoredUploadUrl } = require('../services/uploadUrls');
 const { pickUnitImage } = require('../services/unitAssets');
 
 function mapGalleryAsset(asset) {
   return {
     id: asset.id,
-    url: asset.image_link,
+    url: normalizeStoredUploadUrl(asset.image_link),
     label: asset.image_label || '',
   };
 }
@@ -202,7 +202,7 @@ function formatPublicProjectDetail(project) {
 
 function pickProjectImage(project) {
   if (isShareableMediaUrl(project.images_videos_link)) {
-    return project.images_videos_link.trim();
+    return normalizeStoredUploadUrl(project.images_videos_link.trim());
   }
 
   const galleryImage = (project.assets || []).find(
@@ -212,7 +212,7 @@ function pickProjectImage(project) {
   )?.image_link;
 
   if (galleryImage) {
-    return galleryImage.trim();
+    return normalizeStoredUploadUrl(galleryImage.trim());
   }
 
   const assetImage = (project.assets || []).find(
@@ -222,7 +222,7 @@ function pickProjectImage(project) {
   )?.image_link;
 
   if (assetImage) {
-    return assetImage.trim();
+    return normalizeStoredUploadUrl(assetImage.trim());
   }
 
   return null;
@@ -452,7 +452,7 @@ exports.getOne = async (req, res) => {
       return res.status(404).json({ error: 'Property not found.' });
     }
 
-    const logo_url = await getProjectLogoUrl(project.id);
+    const logo_url = normalizeStoredUploadUrl(await getProjectLogoUrl(project.id));
     const gallery_images = await listProjectGallery(project.id);
 
     res.json({
@@ -484,7 +484,7 @@ exports.uploadLogo = async (req, res) => {
     const asset = await upsertProjectLogo(projectId, publicUrl);
 
     res.json({
-      logo_url: asset.image_link,
+      logo_url: normalizeStoredUploadUrl(asset.image_link),
       asset_id: asset.id,
     });
   } catch (err) {

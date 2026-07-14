@@ -26,16 +26,17 @@ function isShareableMediaUrl(url) {
 
 function formatMediaLinks({ imagesVideosLink, assets = [] }) {
     const links = [];
+    const { normalizeStoredUploadUrl } = require('./uploadUrls');
 
     if (isShareableMediaUrl(imagesVideosLink)) {
-        links.push(imagesVideosLink.trim());
+        links.push(normalizeStoredUploadUrl(imagesVideosLink.trim()));
     }
 
     for (const asset of assets) {
         for (const field of ['image_link', 'video_link', 'document_link']) {
             const value = asset?.[field];
-            if (isShareableMediaUrl(value) && !links.includes(value.trim())) {
-                links.push(value.trim());
+            if (isShareableMediaUrl(value) && !links.includes(normalizeStoredUploadUrl(value.trim()))) {
+                links.push(normalizeStoredUploadUrl(value.trim()));
             }
         }
     }

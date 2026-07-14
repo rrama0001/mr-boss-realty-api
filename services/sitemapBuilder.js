@@ -11,6 +11,7 @@ const { slugifyPart } = require('./projectSlug');
 const { buildBuildingRef } = require('./buildingSlug');
 const { buildUnitRef } = require('./unitSlug');
 const { isShareableMediaUrl } = require('./aiPropertySnapshot');
+const { normalizeStoredUploadUrl } = require('./uploadUrls');
 
 function resolveUnitListingRef(unit = {}) {
     const slug = String(unit.slug || '').trim();
@@ -28,26 +29,26 @@ function resolveBuildingListingRef(building = {}) {
 
 function pickProjectHeroImage(project = {}) {
     if (isShareableMediaUrl(project.images_videos_link)) {
-        return project.images_videos_link.trim();
+        return normalizeStoredUploadUrl(project.images_videos_link.trim());
     }
 
     const assetImage = (project.assets || []).find(
         (asset) => !asset.unit_id && isShareableMediaUrl(asset.image_link),
     )?.image_link;
 
-    return assetImage ? assetImage.trim() : null;
+    return assetImage ? normalizeStoredUploadUrl(assetImage.trim()) : null;
 }
 
 function pickUnitHeroImage(unit = {}) {
     if (isShareableMediaUrl(unit.cover_image_url)) {
-        return unit.cover_image_url.trim();
+        return normalizeStoredUploadUrl(unit.cover_image_url.trim());
     }
 
     const assetImage = (unit.assets || []).find(
         (asset) => isShareableMediaUrl(asset.image_link),
     )?.image_link;
 
-    return assetImage ? assetImage.trim() : null;
+    return assetImage ? normalizeStoredUploadUrl(assetImage.trim()) : null;
 }
 
 function buildProjectRecord(project = {}) {

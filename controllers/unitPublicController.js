@@ -13,6 +13,7 @@ const {
 const { pickProjectLogo } = require('../services/projectLogo');
 const { pickUnitImage } = require('../services/unitAssets');
 const { pickUnitDisplayPrice } = require('../services/unitListing');
+const { normalizeStoredUploadUrl } = require('../services/uploadUrls');
 
 const unitInclude = {
   projects: {
@@ -62,7 +63,7 @@ const wholeBuildingProjectSelect = {
 
 function pickProjectImageFromRecord(project = {}) {
   if (isShareableMediaUrl(project.images_videos_link)) {
-    return project.images_videos_link.trim();
+    return normalizeStoredUploadUrl(project.images_videos_link.trim());
   }
 
   const assetImage = project.assets?.find(
@@ -70,7 +71,7 @@ function pickProjectImageFromRecord(project = {}) {
   )?.image_link;
 
   if (assetImage) {
-    return assetImage.trim();
+    return normalizeStoredUploadUrl(assetImage.trim());
   }
 
   return null;
@@ -115,7 +116,7 @@ function collectUnitAssetImages(unit) {
   return (unit.assets || [])
     .map((asset) => asset.image_link)
     .filter(isShareableMediaUrl)
-    .map((url) => url.trim());
+    .map((url) => normalizeStoredUploadUrl(url.trim()));
 }
 
 function formatPublicUnitListItem(unit) {

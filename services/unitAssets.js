@@ -1,6 +1,6 @@
 const { prisma } = require('../prisma/prismaClient');
 const { isShareableMediaUrl } = require('./aiPropertySnapshot');
-const { deleteStoredUploadFile, isUnitOwnedUploadUrl } = require('./uploadUrls');
+const { deleteStoredUploadFile, isUnitOwnedUploadUrl, normalizeStoredUploadUrl } = require('./uploadUrls');
 
 const ASSET_KIND_UNIT = 'unit';
 
@@ -26,7 +26,7 @@ function isCardImageUrl(url) {
 function normalizeImageUrls(imageUrls = []) {
     return [...new Set(
         (Array.isArray(imageUrls) ? imageUrls : [])
-            .map((url) => String(url || '').trim())
+            .map((url) => normalizeStoredUploadUrl(String(url || '').trim()))
             .filter(Boolean),
     )];
 }
@@ -42,7 +42,7 @@ async function listUnitImageUrls(unitId) {
     });
 
     return assets
-        .map((asset) => asset.image_link?.trim())
+        .map((asset) => normalizeStoredUploadUrl(asset.image_link?.trim() || ''))
         .filter(Boolean);
 }
 
@@ -56,10 +56,14 @@ async function syncUnitImageAssets(unitId, projectId, imageUrls = []) {
         },
     });
 
-    const existingUrlSet = new Set(existing.map((asset) => asset.image_link));
+    const existingUrlSet = new Set(
+        existing.map((asset) => normalizeStoredUploadUrl(asset.image_link)),
+    );
     const nextUrlSet = new Set(urls);
 
-    const toRemove = existing.filter((asset) => !nextUrlSet.has(asset.image_link));
+    const toRemove = existing.filter(
+        (asset) => !nextUrlSet.has(normalizeStoredUploadUrl(asset.image_link)),
+    );
     const toAdd = urls.filter((url) => !existingUrlSet.has(url));
 
     for (const asset of toRemove) {
@@ -85,7 +89,7 @@ async function syncUnitImageAssets(unitId, projectId, imageUrls = []) {
 
 function normalizeCoverImageUrl(coverImageUrl, assetUrls = []) {
     const urls = normalizeImageUrls(assetUrls);
-    const cover = String(coverImageUrl || '').trim();
+    const cover = normalizeStoredUploadUrl(String(coverImageUrl || '').trim());
     if (!cover || !isUnitOwnedUploadUrl(cover)) return null;
     return urls.includes(cover) ? cover : null;
 }
@@ -93,7 +97,7 @@ function normalizeCoverImageUrl(coverImageUrl, assetUrls = []) {
 /** Prefer unit uploads / picked photos over legacy images_videos_link placeholders. */
 function pickUnitImage(unit = {}) {
     if (isCardImageUrl(unit.cover_image_url)) {
-        return unit.cover_image_url.trim();
+        return normalizeStoredUploadUrl(unit.cover_image_url.trim());
     }
 
     const assets = (unit.assets || []).filter(
@@ -102,15 +106,15 @@ function pickUnitImage(unit = {}) {
 
     const unitUpload = assets.find((asset) => isUnitOwnedUploadUrl(asset.image_link));
     if (unitUpload) {
-        return unitUpload.image_link.trim();
+        return normalizeStoredUploadUrl(unitUpload.image_link.trim());
     }
 
     if (assets.length > 0) {
-        return assets[0].image_link.trim();
+        return normalizeStoredUploadUrl(assets[0].image_link.trim());
     }
 
     if (isCardImageUrl(unit.images_videos_link)) {
-        return unit.images_videos_link.trim();
+        return normalizeStoredUploadUrl(unit.images_videos_link.trim());
     }
 
     return null;

@@ -7,6 +7,7 @@ const { formatPublicWholeBuilding } = require('../services/buildingWholeListing'
 const { resolveBuildingIdFromRef } = require('../services/buildingSlug');
 const { sanitizePublicWholeBuilding } = require('../services/publicFieldPolicy');
 const { pickProjectLogo } = require('../services/projectLogo');
+const { normalizeStoredUploadUrl } = require('../services/uploadUrls');
 const wholeBuildingProjectSelect = {
   id: true,
   slug: true,
@@ -42,7 +43,7 @@ async function findProjectByPublicParam(param) {
 
 function pickProjectImageFromRecord(project = {}) {
   if (isShareableMediaUrl(project.images_videos_link)) {
-    return project.images_videos_link.trim();
+    return normalizeStoredUploadUrl(project.images_videos_link.trim());
   }
 
   const assetImage = project.assets?.find(
@@ -50,7 +51,7 @@ function pickProjectImageFromRecord(project = {}) {
   )?.image_link;
 
   if (assetImage) {
-    return assetImage.trim();
+    return normalizeStoredUploadUrl(assetImage.trim());
   }
 
   return null;
@@ -58,7 +59,7 @@ function pickProjectImageFromRecord(project = {}) {
 
 function pickWholeBuildingImage(building = {}, project = {}) {
   if (isShareableMediaUrl(building.images_videos_link)) {
-    return building.images_videos_link.trim();
+    return normalizeStoredUploadUrl(building.images_videos_link.trim());
   }
 
   return pickProjectImageFromRecord(project);

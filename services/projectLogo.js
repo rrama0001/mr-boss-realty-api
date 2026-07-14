@@ -2,7 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { prisma } = require('../prisma/prismaClient');
 const { isShareableMediaUrl } = require('./aiPropertySnapshot');
-const { getUploadsRoot, uploadPathnameToRelative } = require('./uploadUrls');
+const { getUploadsRoot, uploadPathnameToRelative, normalizeStoredUploadUrl } = require('./uploadUrls');
 
 const ASSET_KIND_LOGO = 'logo';
 
@@ -21,7 +21,8 @@ function pickProjectLogo(project = {}) {
             return bTime - aTime;
         });
 
-    return candidates[0]?.image_link?.trim() || null;
+    const link = candidates[0]?.image_link?.trim() || null;
+    return link ? normalizeStoredUploadUrl(link) : null;
 }
 
 async function findProjectLogoAsset(projectId) {
@@ -39,7 +40,8 @@ async function findProjectLogoAsset(projectId) {
 
 async function getProjectLogoUrl(projectId) {
     const asset = await findProjectLogoAsset(projectId);
-    return asset?.image_link?.trim() || null;
+    const link = asset?.image_link?.trim() || null;
+    return link ? normalizeStoredUploadUrl(link) : null;
 }
 
 async function deleteStoredLogoFile(imageLink) {

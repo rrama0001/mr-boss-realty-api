@@ -24,6 +24,13 @@ function getPublicUploadUrl(relativePath) {
     return `${getApiPublicBaseUrl()}/uploads/${normalized}`;
 }
 
+/** Fix legacy URLs that incorrectly include /api before /uploads. */
+function normalizeStoredUploadUrl(url) {
+    const value = String(url || '').trim();
+    if (!value) return value;
+    return value.replace(/\/api\/uploads\//gi, '/uploads/');
+}
+
 function uploadPathnameToRelative(pathname) {
     const pathValue = String(pathname || '');
     if (pathValue.startsWith('/api/uploads/')) {
@@ -58,6 +65,7 @@ module.exports = {
     getUploadsRoot,
     getApiPublicBaseUrl,
     getPublicUploadUrl,
+    normalizeStoredUploadUrl,
     deleteStoredUploadFile,
     isUnitOwnedUploadUrl,
     uploadPathnameToRelative,
