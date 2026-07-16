@@ -35,7 +35,8 @@ const {
   replaceGalleryImage,
   countUnitReferencesToImageUrl,
 } = require('../services/projectGallery');
-const { getPublicUploadUrl, normalizeStoredUploadUrl, uploadUrlKey } = require('../services/uploadUrls');
+const { normalizeStoredUploadUrl, uploadUrlKey } = require('../services/uploadUrls');
+const { persistUploadedFile } = require('../services/objectStorage');
 const { pickUnitImage } = require('../services/unitAssets');
 
 function mapGalleryAsset(asset) {
@@ -485,9 +486,12 @@ exports.uploadLogo = async (req, res) => {
       return res.status(404).json({ error: 'Property not found.' });
     }
 
-    const relativePath = path.posix.join('projects', String(projectId), req.file.filename);
-    const publicUrl = getPublicUploadUrl(relativePath);
-    const asset = await upsertProjectLogo(projectId, publicUrl);
+    const stored = await persistUploadedFile(
+      req.file,
+      path.posix.join('projects', String(projectId)),
+      { filename: 'logo.jpg' },
+    );
+    const asset = await upsertProjectLogo(projectId, stored.publicUrl);
 
     res.json({
       logo_url: normalizeStoredUploadUrl(asset.image_link),
@@ -553,9 +557,11 @@ exports.uploadGallery = async (req, res) => {
       }
 
       const file = req.files[0];
-      const relativePath = path.posix.join('projects', String(projectId), 'gallery', file.filename);
-      const publicUrl = getPublicUploadUrl(relativePath);
-      const asset = await replaceGalleryImage(replaceAssetId, projectId, publicUrl);
+      const stored = await persistUploadedFile(
+        file,
+        path.posix.join('projects', String(projectId), 'gallery'),
+      );
+      const asset = await replaceGalleryImage(replaceAssetId, projectId, stored.publicUrl);
       if (!asset) {
         return res.status(404).json({ error: 'Gallery image not found.' });
       }
@@ -577,9 +583,11 @@ exports.uploadGallery = async (req, res) => {
 
     for (let index = 0; index < req.files.length; index += 1) {
       const file = req.files[index];
-      const relativePath = path.posix.join('projects', String(projectId), 'gallery', file.filename);
-      const publicUrl = getPublicUploadUrl(relativePath);
-      const asset = await createGalleryAsset(projectId, publicUrl, labels[index] || null);
+      const stored = await persistUploadedFile(
+        file,
+        path.posix.join('projects', String(projectId), 'gallery'),
+      );
+      const asset = await createGalleryAsset(projectId, stored.publicUrl, labels[index] || null);
       created.push(mapGalleryAsset(asset));
     }
 

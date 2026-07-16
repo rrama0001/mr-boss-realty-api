@@ -9,7 +9,7 @@ const { syncUnitSlug } = require('../services/unitSlug');
 const { listUnitImageUrls, syncUnitImageAssets, applyUnitCoverImage } = require('../services/unitAssets');
 const { normalizeUnitListingFields, validateUnitListingFields } = require('../services/unitListing');
 const uploadUnitImages = require('../middlewares/uploadUnitImages');
-const { getPublicUploadUrl } = require('../services/uploadUrls');
+const { persistUploadedFile } = require('../services/objectStorage');
 
 const unitInclude = {
   projects: true,
@@ -244,9 +244,14 @@ router.post('/:id/images', async (req, res, next) => {
         }
 
         const existingUrls = await listUnitImageUrls(unitId);
-        const uploadedUrls = req.files.map((file) => getPublicUploadUrl(
-          path.posix.join('projects', String(unit.project_id), 'units', String(unitId), file.filename),
-        ));
+        const uploadedUrls = [];
+        for (const file of req.files) {
+          const stored = await persistUploadedFile(
+            file,
+            path.posix.join('projects', String(unit.project_id), 'units', String(unitId)),
+          );
+          uploadedUrls.push(stored.publicUrl);
+        }
         const replaceUrl = optionalString(req.body.replace_url);
         const nextUrls = replaceUrl && existingUrls.includes(replaceUrl)
           ? existingUrls.filter((url) => url !== replaceUrl).concat(uploadedUrls)

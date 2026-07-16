@@ -1,8 +1,6 @@
-const fs = require('fs').promises;
-const path = require('path');
 const { prisma } = require('../prisma/prismaClient');
 const { isShareableMediaUrl } = require('./aiPropertySnapshot');
-const { getUploadsRoot, uploadPathnameToRelative, normalizeStoredUploadUrl } = require('./uploadUrls');
+const { deleteStoredUploadFile, normalizeStoredUploadUrl } = require('./uploadUrls');
 
 const ASSET_KIND_LOGO = 'logo';
 
@@ -45,18 +43,7 @@ async function getProjectLogoUrl(projectId) {
 }
 
 async function deleteStoredLogoFile(imageLink) {
-    if (!imageLink) return;
-
-    try {
-        const { pathname } = new URL(imageLink);
-        const relativePath = uploadPathnameToRelative(pathname);
-        if (!relativePath) return;
-
-        const filePath = path.join(getUploadsRoot(), relativePath);
-        await fs.unlink(filePath);
-    } catch {
-        // ignore missing files or invalid URLs
-    }
+    await deleteStoredUploadFile(imageLink);
 }
 
 async function upsertProjectLogo(projectId, publicUrl) {

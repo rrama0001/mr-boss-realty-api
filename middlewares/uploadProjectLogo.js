@@ -1,7 +1,5 @@
-const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
-const { getUploadsRoot } = require('../services/uploadUrls');
 
 const ALLOWED_MIME_TYPES = new Set([
     'image/jpeg',
@@ -12,20 +10,6 @@ const ALLOWED_MIME_TYPES = new Set([
 ]);
 
 const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg']);
-
-const storage = multer.diskStorage({
-    destination(req, file, cb) {
-        const projectId = String(req.params.id || 'unknown');
-        const dir = path.join(getUploadsRoot(), 'projects', projectId);
-
-        fs.mkdir(dir, { recursive: true }, (err) => {
-            cb(err, dir);
-        });
-    },
-    filename(req, file, cb) {
-        cb(null, 'logo.jpg');
-    },
-});
 
 function fileFilter(req, file, cb) {
     const ext = path.extname(file.originalname).toLowerCase();
@@ -38,7 +22,7 @@ function fileFilter(req, file, cb) {
 }
 
 const uploadProjectLogo = multer({
-    storage,
+    storage: multer.memoryStorage(),
     fileFilter,
     limits: { fileSize: 5 * 1024 * 1024 },
 });

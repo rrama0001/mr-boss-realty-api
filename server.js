@@ -7,7 +7,6 @@ const express = require('express');
 const session = require('express-session');
 const passport = require('passport');
 const cors = require('cors');
-const path = require('path');
 const {
     writeLockFile,
     clearLockFile,
@@ -44,10 +43,22 @@ app.set('trust proxy', 1);
 // ✅ Public SEO routes (sitemap + robots) — generated dynamically from the database
 app.use('/', require('./routes/sitemap'));
 
-const uploadsRoot = path.join(__dirname, 'uploads');
-// Canonical public path. Also mount under /api/uploads for legacy URLs when API_URL included /api.
-app.use('/uploads', express.static(uploadsRoot));
-app.use('/api/uploads', express.static(uploadsRoot));
+const { createUploadsMiddleware } = require('./middlewares/serveUploads');
+const { isR2Configured, getR2PublicBaseUrl } = require('./services/r2Storage');
+const serveUploads = createUploadsMiddleware();
+// Canonical public path. Local disk first, then Cloudflare R2. Also under /api/uploads for legacy URLs.
+app.use('/uploads', serveUploads);
+app.use('/api/uploads', serveUploads);
+
+if (isR2Configured()) {
+    const publicBase = getR2PublicBaseUrl();
+    console.log(
+        '[uploads] Cloudflare R2 enabled',
+        publicBase ? `(public: ${publicBase})` : '(no R2_PUBLIC_URL; using API /uploads proxy)',
+    );
+} else {
+    console.log('[uploads] Local disk storage (R2 credentials not fully configured)');
+}
 
 // ✅ Session setup (for Passport)
 // Works on both local development and production

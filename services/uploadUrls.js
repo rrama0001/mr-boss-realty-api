@@ -1,43 +1,53 @@
-const fs = require('fs');
-const path = require('path');
-
-function getUploadsRoot() {
-    return path.join(__dirname, '..', 'uploads');
-}
-
-/**
- * Host origin for public upload URLs (no trailing slash, no /api suffix).
- * Uploads are served at /uploads, not under /api.
- */
-function getApiPublicBaseUrl() {
-    const configured = String(process.env.API_URL || '').trim();
-    if (configured) {
-        return configured.replace(/\/$/, '').replace(/\/api$/i, '');
-    }
-
-    const port = process.env.PORT || 3000;
-    return `http://localhost:${port}`;
-}
+const {
+    getUploadsRoot,
+    getApiPublicBaseUrl,
+    getPublicObjectUrl,
+    deleteStoredObject,
+    extractObjectKey,
+} = require('./objectStorage');
+const { getR2PublicBaseUrl } = require('./r2Storage');
 
 function getPublicUploadUrl(relativePath) {
     const normalized = String(relativePath || '').replace(/^\/+/, '');
-    return `${getApiPublicBaseUrl()}/uploads/${normalized}`;
+    return getPublicObjectUrl(normalized);
 }
 
-/** Fix legacy URLs that incorrectly include /api before /uploads. */
+/**
+ * Normalize stored media URLs:
+ * - strip legacy `/api/uploads/` prefix
+ * - rewrite local/API upload URLs to R2_PUBLIC_URL when configured
+ */
 function normalizeStoredUploadUrl(url) {
     const value = String(url || '').trim();
     if (!value) return value;
-    return value.replace(/\/api\/uploads\//gi, '/uploads/');
+
+    const withoutApiPrefix = value.replace(/\/api\/uploads\//gi, '/uploads/');
+    const publicBase = getR2PublicBaseUrl();
+    if (!publicBase) {
+        return withoutApiPrefix;
+    }
+
+    const key = extractObjectKey(withoutApiPrefix);
+    if (key && /^projects\//i.test(key)) {
+        return `${publicBase}/${key}`;
+    }
+
+    return withoutApiPrefix;
 }
 
 /**
  * Comparable key for upload URLs across absolute/relative and host differences.
  * e.g. http://localhost:3000/uploads/a.jpg and /uploads/a.jpg -> uploads/a.jpg
+ * Also normalizes R2 public CDN URLs to the object key.
  */
 function uploadUrlKey(url) {
-    const normalized = normalizeStoredUploadUrl(url);
+    const normalized = String(url || '').trim();
     if (!normalized) return '';
+
+    const objectKey = extractObjectKey(normalized.replace(/\/api\/uploads\//gi, '/uploads/'));
+    if (objectKey) {
+        return objectKey.toLowerCase();
+    }
 
     try {
         if (/^https?:\/\//i.test(normalized)) {
@@ -59,26 +69,18 @@ function uploadPathnameToRelative(pathname) {
     if (pathValue.startsWith('/uploads/')) {
         return pathValue.slice('/uploads/'.length);
     }
+    if (/^\/projects\/\d+\//i.test(pathValue)) {
+        return pathValue.slice(1);
+    }
     return null;
 }
 
 async function deleteStoredUploadFile(imageLink) {
-    if (!imageLink) return;
-
-    try {
-        const { pathname } = new URL(imageLink);
-        const relativePath = uploadPathnameToRelative(pathname);
-        if (!relativePath) return;
-
-        const filePath = path.join(getUploadsRoot(), relativePath);
-        await fs.promises.unlink(filePath);
-    } catch {
-        // ignore missing files or invalid URLs
-    }
+    await deleteStoredObject(imageLink);
 }
 
 function isUnitOwnedUploadUrl(imageLink) {
-    return /\/uploads\/projects\/\d+\/units\//i.test(String(imageLink || ''));
+    return /projects\/\d+\/units\//i.test(String(imageLink || ''));
 }
 
 module.exports = {
