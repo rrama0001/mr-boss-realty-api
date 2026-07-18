@@ -211,6 +211,13 @@ model company_profile {
   updated_at      DateTime @updatedAt
 }
 
+model website_settings {
+  id                             Int      @id @default(1)
+  property_page_records_per_page Int      @default(15)
+  created_at                     DateTime @default(now())
+  updated_at                     DateTime @updatedAt
+}
+
 model leads {
   id                Int      @id @default(autoincrement())
   contact_hash      String

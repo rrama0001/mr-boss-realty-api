@@ -20,7 +20,7 @@ async function main() {
     create: {
       id: 1,
       company_name: 'Mr. Boss Realty',
-      tagline: 'The smarter way to find your next property—anywhere, anytime.',
+      tagline: 'The smarter way to find condos, houses, and rentals—anywhere, anytime.',
       email: 'hello@mrbossrealty.com',
       phone: '+63 917 000 0000',
       address: 'Cebu City, Philippines',

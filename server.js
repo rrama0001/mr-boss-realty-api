@@ -118,6 +118,7 @@ app.use('/api/leads', require('./routes/leads'));
 app.use('/api/ai', require('./routes/ai'));
 app.use('/api/ai-settings', require('./routes/aiSettings'));
 app.use('/api/company-profile', require('./routes/companyProfile'));
+app.use('/api/website-settings', require('./routes/websiteSettings'));
 app.use('/api/messenger', require('./routes/messenger'));
 
 // ✅ Temporary DB test route
