@@ -1,3 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const { createSoftDeleteExtension } = require('../services/softDelete');
+
+const prisma = new PrismaClient().$extends(createSoftDeleteExtension());
+
 module.exports = { prisma };

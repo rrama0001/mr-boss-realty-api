@@ -9,6 +9,10 @@ const {
   validateWholeListingFields,
 } = require('../services/buildingWholeListing');
 const { syncBuildingSlug } = require('../services/buildingSlug');
+const {
+  softDeleteBuildingCascade,
+  restoreBuilding,
+} = require('../services/softDelete');
 
 async function buildBuildingData(body, { requireStatus = false } = {}) {
   const {
@@ -243,8 +247,8 @@ exports.update = async (req, res) => {
 exports.remove = async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const existing = await prisma.buildings.findUnique({
-      where: { id },
+    const existing = await prisma.buildings.findFirst({
+      where: { id, deleted_at: null },
       select: { project_id: true },
     });
 
@@ -252,10 +256,29 @@ exports.remove = async (req, res) => {
       return res.status(404).json({ error: 'Building not found' });
     }
 
-    await prisma.buildings.delete({ where: { id } });
+    await softDeleteBuildingCascade(prisma, id);
     await syncProjectStatus(existing.project_id);
 
     res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.restore = async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const result = await restoreBuilding(prisma, id);
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
+    }
+
+    if (result.record?.project_id) {
+      await syncProjectStatus(result.record.project_id);
+    }
+
+    res.json(result.record);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });

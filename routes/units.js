@@ -8,6 +8,7 @@ const unitPublicController = require('../controllers/unitPublicController');
 const { syncUnitSlug } = require('../services/unitSlug');
 const { listUnitImageUrls, syncUnitImageAssets, applyUnitCoverImage } = require('../services/unitAssets');
 const { normalizeUnitListingFields, validateUnitListingFields } = require('../services/unitListing');
+const { softDeleteUnit, restoreUnit } = require('../services/softDelete');
 const uploadUnitImages = require('../middlewares/uploadUnitImages');
 const { persistUploadedFile } = require('../services/objectStorage');
 
@@ -324,14 +325,31 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// 🟢 Delete a unit
+// 🟢 Restore a soft-deleted unit
+router.post('/:id/restore', async (req, res) => {
+  try {
+    const result = await restoreUnit(prisma, parseInt(req.params.id, 10));
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
+    }
+    res.json(result.record);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to restore unit' });
+  }
+});
+
+// 🟢 Soft-delete a unit
 router.delete('/:id', async (req, res) => {
   try {
-    await prisma.units.delete({ where: { id: parseInt(req.params.id) } });
+    const deleted = await softDeleteUnit(prisma, parseInt(req.params.id, 10));
+    if (!deleted) {
+      return res.status(404).json({ error: 'Unit not found' });
+    }
     res.json({ success: true });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to delete unit" });
+    res.status(500).json({ error: 'Failed to delete unit' });
   }
 });
 

@@ -50,6 +50,7 @@ model buildings {
   total_available_parking Int?
   created_at              DateTime       @default(now())
   updated_at              DateTime       @updatedAt
+  deleted_at              DateTime?
   freebies                String?
   status                  String?
   is_whole_property_listing Boolean        @default(false)
@@ -78,6 +79,8 @@ model buildings {
   projects                projects       @relation(fields: [project_id], references: [id])
   deliverables            deliverables[]
   units                   units[]
+
+  @@index([deleted_at])
 }
 
 model deliverables {
@@ -112,6 +115,7 @@ model projects {
   contact_person_email     String?
   created_at               DateTime       @default(now())
   updated_at               DateTime       @updatedAt
+  deleted_at               DateTime?
   amenities                String?
   images_videos_link       String?
   cover_image_url          String?
@@ -124,6 +128,8 @@ model projects {
   buildings                buildings[]
   deliverables             deliverables[]
   units                    units[]
+
+  @@index([deleted_at])
 }
 
 model units {
@@ -148,6 +154,7 @@ model units {
   ai_notes                  String?
   created_at                DateTime       @default(now())
   updated_at                DateTime       @updatedAt
+  deleted_at                DateTime?
   unit_price                Float?
   listing_type              String         @default("sale")
   monthly_rent              Float?
@@ -160,6 +167,8 @@ model units {
   deliverables              deliverables[]
   buildings                 buildings      @relation(fields: [building_id], references: [id])
   projects                  projects       @relation(fields: [project_id], references: [id])
+
+  @@index([deleted_at])
 }
 
 model unit_types {

@@ -19,8 +19,8 @@ router.get('/:id', buildingController.getOne);
 // Example: PUT /api/buildings/1
 router.put('/:id', buildingController.update);
 
-// 🔹 Delete a building by ID
-// Example: DELETE /api/buildings/1
+// Restore before delete pattern for clarity
+router.post('/:id/restore', buildingController.restore);
 router.delete('/:id', buildingController.remove);
 
 module.exports = router;

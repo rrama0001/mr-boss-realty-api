@@ -21,6 +21,10 @@ const {
   sanitizePublicProjectListing,
 } = require('../services/publicFieldPolicy');
 const {
+  softDeleteProjectCascade,
+  restoreProject,
+} = require('../services/softDelete');
+const {
   getProjectLogoUrl,
   pickProjectLogo,
   upsertProjectLogo,
@@ -851,8 +855,26 @@ exports.update = async (req, res) => {
 
 exports.remove = async (req, res) => {
   try {
-    await prisma.projects.delete({ where: { id: parseInt(req.params.id) } });
+    const id = parseInt(req.params.id, 10);
+    const result = await softDeleteProjectCascade(prisma, id);
+    if (!result) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
     res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.restore = async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const result = await restoreProject(prisma, id);
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
+    }
+    res.json(result.record);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
