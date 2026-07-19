@@ -3,6 +3,7 @@ const { findBuildingEntry, collectPrivateRedactionTerms } = require('./aiBuildin
 const { getPublicProjectDisplayName } = require('./projectPublicDisplay');
 const { formatDeveloperAiLines } = require('./aiDeveloperContext');
 const { buildListingDetailPath, buildPropertyDetailPath } = require('./projectPublicUrl');
+const { formatMapLinksForAi } = require('./mapLinks');
 
 const PUBLIC_SITE_URL = (process.env.PUBLIC_SITE_URL || 'https://www.mrbossrealty.com').replace(/\/$/, '');
 
@@ -105,6 +106,8 @@ function formatFocusedUnitSummary(entry) {
     `Developer: ${project.developer || 'n/a'}`,
     ...formatDeveloperAiLines(project),
     `City: ${project.city || 'n/a'}`,
+    `Address: ${project.location || 'n/a'}`,
+    ...formatMapLinksForAi(project),
     `Building: ${building.building_name || 'n/a'}`,
     `Building Type: ${building.building_type || 'n/a'}`,
     `Building Status: ${building.status || 'n/a'}`,
@@ -135,7 +138,7 @@ function formatFocusedUnitSummary(entry) {
 
   if (project.is_private_on_website) {
     lines.push(
-      'Privacy: This is a private property listing. Never mention the owner name or private contact details. Refer to the property only as "Private Property".',
+      'Privacy: This is a private property listing. Never mention the owner name or private contact details. Use "Private Property" as the display name only — still share City and Address when asked.',
     );
   }
 
@@ -240,6 +243,63 @@ function stripInterestContactAsk(text) {
   return result.replace(/\s{2,}/g, ' ').replace(/\s+([.!?])/g, '$1').trim();
 }
 
+/** Remove boilerplate chat closers; keep specific clarifying questions. */
+function stripGenericOfferClosers(text) {
+  let result = String(text || '').trim();
+  if (!result) return result;
+
+  const trailingClosers = [
+    /(?:\n+|\s+)*(?:If you (?:have|need) (?:any )?(?:other |further )?(?:questions?|information|details?)[^.!?\n]*[.!]?\s*)+$/i,
+    /(?:\n+|\s+)*(?:Feel free to (?:ask|reach out|let me know)[^.!?\n]*[.!]?\s*)+$/i,
+    /(?:\n+|\s+)*(?:Let me know if (?:you (?:need|have|want|would like)|there(?:'s| is))[^.!?\n]*[.!]?\s*)+$/i,
+    /(?:\n+|\s+)*(?:Don(?:'t|’t) hesitate to (?:ask|reach out)[^.!?\n]*[.!]?\s*)+$/i,
+    /(?:\n+|\s+)*(?:How else can I (?:help|assist)[^.!?\n]*[.!?]?\s*)+$/i,
+    /(?:\n+|\s+)*(?:Is there anything else (?:I can|you(?:'d| would)? like)[^.!?\n]*[.!?]?\s*)+$/i,
+    /(?:\n+|\s+)*(?:Would you like to know (?:about |more )?[^.!?\n]*\?\s*)+$/i,
+    /(?:\n+|\s+)*(?:Would you like (?:any |more )?(?:other )?(?:details|information)[^.!?\n]*[.!?]?\s*)+$/i,
+    /(?:\n+|\s+)*(?:Just (?:let me know|ask) if[^.!?\n]*[.!]?\s*)+$/i,
+  ];
+
+  let previous;
+  do {
+    previous = result;
+    for (const pattern of trailingClosers) {
+      result = result.replace(pattern, '').trim();
+    }
+  } while (result !== previous && result);
+
+  return result.replace(/\s{2,}/g, ' ').replace(/\s+([.!?])/g, '$1').trim();
+}
+
+function ensureCallbackContactInvite(text, companyContact = null) {
+  const result = String(text || '').trim();
+  if (!result) return result;
+
+  const isReachOut = /(?:someone from our team|our team)\s+will\s+(?:reach out|contact you|call you)/i.test(result)
+    || /will reach out to you shortly/i.test(result)
+    || /arrange your visit/i.test(result);
+
+  if (!isReachOut) return result;
+  if (/\b(?:call us|email us|send(?:\s+us)?\s+an?\s+email)\b/i.test(result)) {
+    return result;
+  }
+
+  const phone = String(companyContact?.phone || '').trim();
+  const email = String(companyContact?.email || '').trim();
+
+  let invite = 'You may also call us or send us an email';
+  if (phone && email) {
+    invite = `You may also call us at ${phone} or send us an email at ${email}`;
+  } else if (phone) {
+    invite = `You may also call us at ${phone} or send us an email`;
+  } else if (email) {
+    invite = `You may also call us or send us an email at ${email}`;
+  }
+
+  const separator = /[.!?]$/.test(result) ? ' ' : '. ';
+  return `${result}${separator}${invite}.`;
+}
+
 function sanitizeClientReply(reply, focus = null, options = {}) {
   let text = normalizeContactFollowUp(normalizeInterestAcknowledgment(reply));
   if (!text) return text;
@@ -284,6 +344,9 @@ function sanitizeClientReply(reply, focus = null, options = {}) {
     text = stripInterestContactAsk(text);
   }
 
+  text = stripGenericOfferClosers(text);
+  text = ensureCallbackContactInvite(text, options.companyContact || null);
+
   return text;
 }
 
@@ -304,4 +367,5 @@ module.exports = {
   normalizeInterestAcknowledgment,
   resolveConversationUnitFocus,
   sanitizeClientReply,
+  stripGenericOfferClosers,
 };

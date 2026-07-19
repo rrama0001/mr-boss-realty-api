@@ -40,21 +40,21 @@ const VERIFICATION_CONSENT_REPLY =
   'If you agree, click **Agree** or **Cancel**.';
 
 const QUOTA_CONSENT_REPLY =
-  'You have reached the free AI chat limit for this session. To continue asking about our listings—and to help us prevent automated abuse—we need to verify your mobile number with a one-time password (OTP).\n\n' +
-  'You are allowing us to keep your contact privately. We will use it for OTP verification and to follow up on your inquiry if needed.\n\n' +
-  'If you agree, click **Agree** or **Cancel**.';
+  'To make sure you are a real person, we need a one-time password (OTP) verification before continuing this chat.\n\n' +
+  'Please enter your mobile number or email in the field below so we can send you an OTP.\n\n' +
+  'Your contact is kept private and used only for OTP verification and to follow up on your inquiry if needed.';
 
 const QUOTA_VERIFIED_REPLY =
-  'Thank you for verifying your contact. You can continue chatting with Mr. Boss AI about our listings. How else can I help you?';
+  'Thank you for verifying your contact. You can continue chatting with Mr. Boss AI about our listings.';
 
 const VERIFICATION_CONTACT_REPLY =
-  'Thank you. Please provide your mobile number so we can send you a one-time password (OTP) for verification.';
+  'Please provide your mobile number or email so we can send you a one-time password (OTP) for verification.';
 
 const VERIFICATION_OTP_SENT_REPLY =
-  'We sent a one-time password (OTP) to your mobile number. Please enter the 6-digit code here to continue.';
+  'We sent a one-time password (OTP) to your contact. Please enter the 6-digit code here to continue.';
 
 const VERIFICATION_OTP_DEV_REPLY =
-  'SMS delivery is not configured on this server yet, so the OTP could not be texted. For local testing, use the development code shown below.';
+  'OTP delivery is not configured on this server yet, so the code could not be sent. For local testing, use the development code shown below.';
 
 const VERIFICATION_CANCEL_REPLY =
   'Understood. I will not collect your contact details. I can still help with information that is publicly listed, such as city, price, bedrooms, and amenities.';
@@ -150,25 +150,6 @@ function buildVerificationCancelReply() {
 
 function buildVerificationDeclinedReply() {
   return VERIFICATION_DECLINED_REPLY;
-}
-
-function collectLocationRedactionTermsFromProjects(projects) {
-  const terms = new Set();
-
-  for (const project of projects) {
-    const location = String(project.location || '').trim();
-    if (location) {
-      terms.add(location);
-      for (const part of location.split(/[,·]/)) {
-        const trimmed = part.trim();
-        if (trimmed.length > 3) {
-          terms.add(trimmed);
-        }
-      }
-    }
-  }
-
-  return [...terms];
 }
 
 function buildVerifiedRestrictedReply(topic, activeFocus, projects, options = {}) {
@@ -360,7 +341,19 @@ function isValidEmail(value) {
 }
 
 function isValidContactValue(value) {
-  return isValidMobile(value);
+  return isValidMobile(value) || isValidEmail(value);
+}
+
+function normalizeContactValue(value) {
+  const mobile = normalizeMobileNumber(value);
+  if (mobile) return { contact: mobile, channel: 'sms' };
+
+  const email = String(value || '').trim().toLowerCase();
+  if (isValidEmail(email)) {
+    return { contact: email, channel: 'email' };
+  }
+
+  return null;
 }
 
 module.exports = {
@@ -373,13 +366,13 @@ module.exports = {
   buildVerificationOtpDevReply,
   buildVerifiedRestrictedReply,
   buildQuotaVerifiedReply,
-  collectLocationRedactionTermsFromProjects,
   detectRestrictedInfoRequest,
   isAiPrivacyRefusalReply,
   isValidContactValue,
   isValidEmail,
   isValidMobile,
   isVerificationConsentReply,
+  normalizeContactValue,
   normalizeMobileNumber,
   resolveListingRefs,
 };

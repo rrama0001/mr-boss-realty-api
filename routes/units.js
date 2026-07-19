@@ -6,11 +6,12 @@ const { prisma } = require('../prisma/prismaClient');
 const { isValidUnitType } = require('../services/unitTypes');
 const unitPublicController = require('../controllers/unitPublicController');
 const { syncUnitSlug } = require('../services/unitSlug');
-const { listUnitImageUrls, syncUnitImageAssets, applyUnitCoverImage } = require('../services/unitAssets');
+const { listUnitImageUrls, syncUnitImageAssets, applyUnitCoverImage, imageUrlsInclude } = require('../services/unitAssets');
 const { normalizeUnitListingFields, validateUnitListingFields } = require('../services/unitListing');
 const { softDeleteUnit, restoreUnit } = require('../services/softDelete');
 const uploadUnitImages = require('../middlewares/uploadUnitImages');
 const { persistUploadedFile } = require('../services/objectStorage');
+const { uploadUrlKey } = require('../services/uploadUrls');
 
 const unitInclude = {
   projects: true,
@@ -25,6 +26,24 @@ function optionalString(value) {
     if (value === '' || value === undefined || value == null) return null;
     const trimmed = String(value).trim();
     return trimmed || null;
+}
+
+/** Accept JSON array or already-parsed array of image URLs from multipart body. */
+function parseClientAssetImageUrls(body = {}) {
+    const raw = body.asset_image_urls;
+    if (raw == null || raw === '') return null;
+
+    let parsed = raw;
+    if (typeof raw === 'string') {
+        try {
+            parsed = JSON.parse(raw);
+        } catch {
+            return null;
+        }
+    }
+
+    if (!Array.isArray(parsed)) return null;
+    return parsed.map((url) => String(url || '').trim()).filter(Boolean);
 }
 
 function optionalInt(value) {
@@ -254,9 +273,14 @@ router.post('/:id/images', async (req, res, next) => {
           uploadedUrls.push(stored.publicUrl);
         }
         const replaceUrl = optionalString(req.body.replace_url);
-        const nextUrls = replaceUrl && existingUrls.includes(replaceUrl)
-          ? existingUrls.filter((url) => url !== replaceUrl).concat(uploadedUrls)
-          : [...existingUrls, ...uploadedUrls];
+        // Prefer the editor's current list so UI deletions are not resurrected from DB.
+        const clientUrls = parseClientAssetImageUrls(req.body);
+        const baseUrls = clientUrls || existingUrls;
+        const nextUrls = replaceUrl && (
+          imageUrlsInclude(baseUrls, replaceUrl) || imageUrlsInclude(existingUrls, replaceUrl)
+        )
+          ? baseUrls.filter((url) => uploadUrlKey(url) !== uploadUrlKey(replaceUrl)).concat(uploadedUrls)
+          : [...baseUrls, ...uploadedUrls];
         const asset_image_urls = await syncUnitImageAssets(
           unitId,
           unit.project_id,
@@ -264,11 +288,26 @@ router.post('/:id/images', async (req, res, next) => {
         );
 
         const currentUnit = await prisma.units.findUnique({ where: { id: unitId } });
-        if (replaceUrl && currentUnit?.cover_image_url === replaceUrl && uploadedUrls[0]) {
+        const currentCover = currentUnit?.cover_image_url || '';
+        const coverStillValid = currentCover && imageUrlsInclude(asset_image_urls, currentCover);
+        const replaceHitsCover = replaceUrl
+          && uploadUrlKey(currentCover) === uploadUrlKey(replaceUrl);
+
+        if ((replaceHitsCover || !coverStillValid) && uploadedUrls[0]) {
           await applyUnitCoverImage(prisma, unitId, uploadedUrls[0], asset_image_urls);
         }
 
-        res.json({ asset_image_urls, uploaded: uploadedUrls, replaced: replaceUrl || null });
+        const refreshed = await prisma.units.findUnique({
+          where: { id: unitId },
+          select: { cover_image_url: true },
+        });
+
+        res.json({
+          asset_image_urls,
+          uploaded: uploadedUrls,
+          replaced: replaceUrl || null,
+          cover_image_url: refreshed?.cover_image_url || null,
+        });
       } catch (uploadErr) {
         console.error('Error uploading unit images:', uploadErr);
         res.status(500).json({ error: uploadErr.message || 'Failed to upload unit images.' });

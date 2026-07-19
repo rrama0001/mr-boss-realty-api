@@ -1,6 +1,11 @@
 const { prisma } = require('../prisma/prismaClient');
 const { isShareableMediaUrl } = require('./aiPropertySnapshot');
-const { deleteStoredUploadFile, isUnitOwnedUploadUrl, normalizeStoredUploadUrl } = require('./uploadUrls');
+const {
+    deleteStoredUploadFile,
+    isUnitOwnedUploadUrl,
+    normalizeStoredUploadUrl,
+    uploadUrlKey,
+} = require('./uploadUrls');
 
 const ASSET_KIND_UNIT = 'unit';
 
@@ -31,6 +36,18 @@ function normalizeImageUrls(imageUrls = []) {
     )];
 }
 
+function imageUrlsInclude(urls = [], candidate) {
+    const key = uploadUrlKey(candidate);
+    if (!key) return false;
+    return (urls || []).some((url) => uploadUrlKey(url) === key);
+}
+
+function findMatchingImageUrl(urls = [], candidate) {
+    const key = uploadUrlKey(candidate);
+    if (!key) return null;
+    return (urls || []).find((url) => uploadUrlKey(url) === key) || null;
+}
+
 async function listUnitImageUrls(unitId) {
     const assets = await prisma.assets.findMany({
         where: {
@@ -56,15 +73,16 @@ async function syncUnitImageAssets(unitId, projectId, imageUrls = []) {
         },
     });
 
-    const existingUrlSet = new Set(
-        existing.map((asset) => normalizeStoredUploadUrl(asset.image_link)),
+    const existingKeys = new Set(
+        existing.map((asset) => uploadUrlKey(asset.image_link)).filter(Boolean),
     );
-    const nextUrlSet = new Set(urls);
+    const nextKeys = new Set(urls.map((url) => uploadUrlKey(url)).filter(Boolean));
 
-    const toRemove = existing.filter(
-        (asset) => !nextUrlSet.has(normalizeStoredUploadUrl(asset.image_link)),
-    );
-    const toAdd = urls.filter((url) => !existingUrlSet.has(url));
+    const toRemove = existing.filter((asset) => {
+        const key = uploadUrlKey(asset.image_link);
+        return key && !nextKeys.has(key);
+    });
+    const toAdd = urls.filter((url) => !existingKeys.has(uploadUrlKey(url)));
 
     for (const asset of toRemove) {
         if (isUnitOwnedUploadUrl(asset.image_link)) {
@@ -91,7 +109,7 @@ function normalizeCoverImageUrl(coverImageUrl, assetUrls = []) {
     const urls = normalizeImageUrls(assetUrls);
     const cover = normalizeStoredUploadUrl(String(coverImageUrl || '').trim());
     if (!cover || !isUnitOwnedUploadUrl(cover)) return null;
-    return urls.includes(cover) ? cover : null;
+    return findMatchingImageUrl(urls, cover);
 }
 
 /** Prefer unit uploads / picked photos over legacy images_videos_link placeholders. */
@@ -136,4 +154,6 @@ module.exports = {
     isCardImageUrl,
     normalizeCoverImageUrl,
     applyUnitCoverImage,
+    imageUrlsInclude,
+    findMatchingImageUrl,
 };

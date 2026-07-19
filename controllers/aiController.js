@@ -11,19 +11,15 @@ const {
 } = require('../services/aiBuildingFocus');
 const { resolveConversationUnitFocus, sanitizeClientReply, isUnitInterestMessage } = require('../services/aiUnitFocus');
 const {
-    detectRestrictedInfoRequest,
     buildVerificationConsentReply,
-    buildVerifiedRestrictedReply,
-    collectLocationRedactionTermsFromProjects,
-    isAiPrivacyRefusalReply,
     resolveListingRefs,
-    RESTRICTED_TOPICS,
 } = require('../services/aiRestrictedInfo');
-const { beginVerification, isVerified, clearSession } = require('../services/aiVerificationStore');
-const { isOtpVerificationEnabled } = require('../services/aiVerificationConfig');
+const { beginVerification, isVerified, clearSession, markConsentAgreed, getSession } = require('../services/aiVerificationStore');
+const { getOtpTriggerQuestionCount } = require('../services/aiVerificationConfig');
 const { ensurePolicyInPrompt } = require('../services/aiPolicyPrompt');
+const { getOrCreateCompanyProfile, toPublicCompanyProfile } = require('../services/companyProfile');
 const {
-    isQuotaExceeded,
+    isQuestionLimitReached,
     recordTokenUsage,
     recordUserMessage,
     clearUsage,
@@ -100,35 +96,36 @@ function buildVerificationFocus(userKey, message, activeFocus, pageUrl = '') {
     });
 }
 
-function startVerificationConsentFlow({
+function startQuestionLimitVerificationFlow({
     userKey,
     message,
     activeFocus,
     pageUrl,
     chatHistory,
-    restrictedRequest,
 }) {
     const verificationFocus = buildVerificationFocus(userKey, message, activeFocus, pageUrl);
 
     beginVerification(userKey, {
-        topic: restrictedRequest.topic,
+        topic: 'chat_quota',
         pendingMessage: message,
         buildingRef: verificationFocus.buildingRef,
         unitRef: verificationFocus.unitRef,
         projectSlug: verificationFocus.projectSlug,
         pageUrl: pageUrl || null,
     });
+    markConsentAgreed(userKey);
 
-    const consentReply = buildVerificationConsentReply(restrictedRequest.topic);
+    const consentReply = buildVerificationConsentReply('chat_quota');
     chatHistory.push({ role: 'assistant', content: consentReply });
 
     return {
         reply: consentReply,
         verificationRequired: true,
         verification: {
-            status: 'consent_pending',
-            topic: restrictedRequest.topic,
-            showConsentActions: true,
+            status: getSession(userKey)?.status || 'contact_pending',
+            topic: 'chat_quota',
+            showConsentActions: false,
+            showContactForm: true,
         },
     };
 }
@@ -161,6 +158,12 @@ exports.getReply = async (req, res) => {
             },
         });
 
+        const companyProfile = toPublicCompanyProfile(await getOrCreateCompanyProfile(prisma));
+        const companyContact = {
+            phone: companyProfile.phone || '',
+            email: companyProfile.email || '',
+        };
+
         const dataText = buildPropertySnapshot(projects);
         const userKey = senderId || source || 'test-user';
         const globalRedactNames = collectPrivateRedactionTermsFromProjects(projects);
@@ -186,12 +189,10 @@ exports.getReply = async (req, res) => {
         const activeFocus = buildingFocus || unitFocus;
         rememberListingFocus(userKey, message, buildingFocus, unitFocus, pageUrl);
 
-        const locationRedactTerms = collectLocationRedactionTermsFromProjects(projects);
-        const globalRedactTerms = [...globalRedactNames, ...locationRedactTerms];
-
         const systemContent = buildSystemContent(aiPrompt, dataText, {
             buildingSummary: buildingFocus?.summary || '',
             unitSummary: unitFocus?.summary || '',
+            companyContact,
         });
 
         if (!conversations.has(userKey)) {
@@ -204,59 +205,29 @@ exports.getReply = async (req, res) => {
         chatHistory.push({ role: 'user', content: message });
         recordUserMessage(userKey);
 
-        const restrictedRequest = detectRestrictedInfoRequest(message);
-        const focusContext = {
-            userKey,
-            pendingMessage: message,
-            chatMessages: getChatMessages(userKey),
-            pageUrl,
-        };
+        const isWebsiteChat = String(source || '').trim().toLowerCase() === 'website';
+        const otpTriggerQuestionCount = isWebsiteChat
+            ? await getOtpTriggerQuestionCount()
+            : null;
+        const otpEnabled = otpTriggerQuestionCount != null;
 
-        if (restrictedRequest && isVerified(userKey)) {
-            const verificationFocus = buildVerificationFocus(userKey, message, activeFocus, pageUrl);
-            const verifiedReply = buildVerifiedRestrictedReply(
-                restrictedRequest.topic,
-                verificationFocus,
-                projects,
-                focusContext,
-            );
-            chatHistory.push({ role: 'assistant', content: verifiedReply });
-
+        // OTP question limit applies to website chat only — not Messenger or admin test.
+        if (
+            isWebsiteChat
+            && otpEnabled
+            && !isVerified(userKey)
+            && isQuestionLimitReached(userKey, otpTriggerQuestionCount + 1)
+        ) {
             return res.json({
-                reply: verifiedReply,
-                verificationRequired: false,
-                otpVerificationEnabled: isOtpVerificationEnabled(),
-            });
-        }
-
-        if (isOtpVerificationEnabled() && restrictedRequest && !isVerified(userKey)) {
-            return res.json({
-                ...startVerificationConsentFlow({
+                ...startQuestionLimitVerificationFlow({
                     userKey,
                     message,
                     activeFocus,
                     pageUrl,
                     chatHistory,
-                    restrictedRequest,
                 }),
                 otpVerificationEnabled: true,
-            });
-        }
-
-        if (isOtpVerificationEnabled() && !isVerified(userKey) && isQuotaExceeded(userKey)) {
-            return res.json({
-                ...startVerificationConsentFlow({
-                    userKey,
-                    message,
-                    activeFocus,
-                    pageUrl,
-                    chatHistory,
-                    restrictedRequest: {
-                        topic: 'chat_quota',
-                        label: 'continued AI chat access',
-                    },
-                }),
-                otpVerificationEnabled: true,
+                otpTriggerQuestionCount,
             });
         }
 
@@ -273,28 +244,10 @@ exports.getReply = async (req, res) => {
             activeFocus,
             {
                 stripInterestContactAsk: isUnitInterestMessage(message),
-                redactNames: globalRedactTerms,
+                redactNames: globalRedactNames,
+                companyContact,
             },
         );
-
-        if (isOtpVerificationEnabled() && !isVerified(userKey) && isAiPrivacyRefusalReply(aiReply)) {
-            const fallbackRequest = restrictedRequest || {
-                topic: 'address',
-                label: RESTRICTED_TOPICS.address.label,
-            };
-
-            return res.json({
-                ...startVerificationConsentFlow({
-                    userKey,
-                    message,
-                    activeFocus,
-                    pageUrl,
-                    chatHistory,
-                    restrictedRequest: fallbackRequest,
-                }),
-                otpVerificationEnabled: true,
-            });
-        }
 
         chatHistory.push({ role: 'assistant', content: aiReply });
 
@@ -306,7 +259,8 @@ exports.getReply = async (req, res) => {
 
         res.json({
             reply: aiReply,
-            otpVerificationEnabled: isOtpVerificationEnabled(),
+            otpVerificationEnabled: otpEnabled,
+            otpTriggerQuestionCount: otpEnabled ? otpTriggerQuestionCount : null,
         });
     } catch (error) {
         console.error('AI error details:', error);
@@ -315,4 +269,129 @@ exports.getReply = async (req, res) => {
             details: error.message || error,
         });
     }
+};
+
+function isOtpFlowAssistantMessage(content) {
+    const text = String(content || '');
+    if (!text) return false;
+
+    return (
+        /one-time password|\bOTP\b/i.test(text)
+        || /make sure you are a real person/i.test(text)
+        || /Under our data privacy policy/i.test(text)
+        || /Please enter your mobile number or email/i.test(text)
+        || /Please provide your mobile number or email/i.test(text)
+        || /We sent a one-time password/i.test(text)
+        || /OTP delivery is not configured/i.test(text)
+        || /development code shown below/i.test(text)
+    );
+}
+
+/**
+ * After chat-quota OTP succeeds, answer the pending user question that triggered verification.
+ */
+exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
+    const chatHistory = conversations.get(userKey);
+    if (!Array.isArray(chatHistory) || chatHistory.length < 2) {
+        return null;
+    }
+
+    while (chatHistory.length > 1) {
+        const last = chatHistory[chatHistory.length - 1];
+        if (last.role !== 'assistant' || !isOtpFlowAssistantMessage(last.content)) {
+            break;
+        }
+        chatHistory.pop();
+    }
+
+    const pendingUser = [...chatHistory].reverse().find((entry) => entry.role === 'user');
+    const message = String(pendingUser?.content || '').trim();
+    if (!message) {
+        return null;
+    }
+
+    const aiSettings = await prisma.ai_settings.findFirst();
+    const aiPrompt = ensurePolicyInPrompt(
+        aiSettings?.prompt || "You are Mr. Boss Realty's helpful real estate assistant.",
+    );
+    const aiModel = aiSettings?.model || 'gpt-4o-mini';
+
+    const projects = await prisma.projects.findMany({
+        include: {
+            buildings: {
+                include: {
+                    units: {
+                        include: { assets: true },
+                    },
+                },
+            },
+            deliverables: true,
+            assets: true,
+        },
+    });
+
+    const companyProfile = toPublicCompanyProfile(await getOrCreateCompanyProfile(prisma));
+    const companyContact = {
+        phone: companyProfile.phone || '',
+        email: companyProfile.email || '',
+    };
+
+    const dataText = buildPropertySnapshot(projects);
+    const globalRedactNames = collectPrivateRedactionTermsFromProjects(projects);
+
+    const previousBuildingFocus = conversationBuildingFocus.get(userKey) || null;
+    const buildingFocus = resolveConversationBuildingFocus(projects, message, previousBuildingFocus);
+
+    if (buildingFocus) {
+        conversationBuildingFocus.set(userKey, { buildingRef: buildingFocus.buildingRef });
+        conversationUnitFocus.delete(userKey);
+    }
+
+    let unitFocus = null;
+    if (!buildingFocus) {
+        const previousUnitFocus = conversationUnitFocus.get(userKey) || null;
+        unitFocus = resolveConversationUnitFocus(projects, message, previousUnitFocus);
+
+        if (unitFocus) {
+            conversationUnitFocus.set(userKey, { unitRef: unitFocus.unitRef });
+        }
+    }
+
+    const activeFocus = buildingFocus || unitFocus;
+    rememberListingFocus(userKey, message, buildingFocus, unitFocus, pageUrl);
+
+    const systemContent = buildSystemContent(aiPrompt, dataText, {
+        buildingSummary: buildingFocus?.summary || '',
+        unitSummary: unitFocus?.summary || '',
+        companyContact,
+    });
+    chatHistory[0] = { role: 'system', content: systemContent };
+
+    const completion = await openai.chat.completions.create({
+        model: aiModel,
+        messages: chatHistory,
+        temperature: aiSettings?.temperature || 0.3,
+    });
+
+    recordTokenUsage(userKey, completion.usage?.total_tokens || 0);
+
+    const aiReply = sanitizeClientReply(
+        completion.choices[0].message.content,
+        activeFocus,
+        {
+            stripInterestContactAsk: isUnitInterestMessage(message),
+            redactNames: globalRedactNames,
+            companyContact,
+        },
+    );
+
+    chatHistory.push({ role: 'assistant', content: aiReply });
+
+    if (conversationHasEnded(aiReply)) {
+        clearConversationState(userKey);
+        clearSession(userKey);
+        clearUsage(userKey);
+    }
+
+    return aiReply;
 };

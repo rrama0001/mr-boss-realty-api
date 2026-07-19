@@ -2,6 +2,7 @@ const { getPublicPropertyUrl, getPublicUnitUrl, getUnitRef } = require('./aiUnit
 const { getBuildingRef, getPublicBuildingUrl } = require('./aiBuildingFocus');
 const { appendDeveloperAiContext, formatDeveloperAiLines } = require('./aiDeveloperContext');
 const { getPublicProjectDisplayName } = require('./projectPublicDisplay');
+const { formatMapLinksForAi } = require('./mapLinks');
 
 const BLOCKED_MEDIA_HOST =
     /(?:^|\.)((?:chatgpt|chat\.openai|openai)\.com|oaiusercontent\.com|files\.oaiusercontent\.com|ngrok\.com)$/i;
@@ -156,6 +157,10 @@ function buildPropertySnapshot(projects) {
         }
         dataText = appendDeveloperAiContext(project, dataText);
         if (project.city) dataText += `   City: ${project.city}\n`;
+        if (project.location) dataText += `   Address: ${project.location}\n`;
+        for (const mapLine of formatMapLinksForAi(project)) {
+            dataText += `   ${mapLine}\n`;
+        }
         if (project.description && !isPrivate) {
             dataText += `   Description: ${project.description}\n`;
         } else if (project.description && isPrivate) {
@@ -246,7 +251,7 @@ function buildPropertySnapshot(projects) {
 }
 
 function buildSystemContent(aiPrompt, dataText, focusSummaries = {}) {
-    const { buildingSummary = '', unitSummary = '' } = focusSummaries;
+    const { buildingSummary = '', unitSummary = '', companyContact = null } = focusSummaries;
 
     const buildingFocusBlock = buildingSummary
         ? `Active whole-property listing focus for this conversation (use this as the primary listing unless the user switches):
@@ -262,9 +267,19 @@ ${unitSummary}
 `
         : '';
 
+    const companyPhone = String(companyContact?.phone || '').trim();
+    const companyEmail = String(companyContact?.email || '').trim();
+    const companyContactBlock = (companyPhone || companyEmail)
+        ? `Company contact info (Mr. Boss Realty public contact — share when inviting the client to reach you):
+${companyPhone ? `- Phone: ${companyPhone}` : ''}
+${companyEmail ? `- Email: ${companyEmail}` : ''}
+
+`
+        : '';
+
     return `${aiPrompt}
 
-${buildingFocusBlock}${unitFocusBlock}You have access to the following database information:
+${buildingFocusBlock}${unitFocusBlock}${companyContactBlock}You have access to the following database information:
 ${dataText}
 Whole-property listing rules:
 - Each whole-property listing has an internal 8-character Listing Ref and a Listing Page URL (example: /properties/{slug}/{ref}). The Listing Ref is for internal matching only.
@@ -278,6 +293,7 @@ Unit reference rules:
 - When the user says they are interested in a unit, mentions a Unit Ref, says "unit" followed by an 8-character code, or shares a /properties/... or /units/... URL, treat that unit as their unit of interest for the rest of the conversation.
 - When acknowledging unit interest, speak directly to the client: "You are interested in [unit label]..." — never say "You've mentioned your interest in", "You mentioned your interest in", "I see you're interested in", or similar meta phrasing.
 - When acknowledging unit interest only, stop after confirming the unit. Do not ask for contact details unless the client explicitly asks to be contacted, requests a callback, or asks for a site visit.
+- When confirming that the team will reach out, arrange a visit, or follow up after the client shares their name/contact, also invite them to call or email Mr. Boss Realty (use Company contact info phone/email when available). Example: "Someone from our team will reach out shortly. You may also call us or send us an email."
 - Answer follow-up questions about price, size, photos, payment terms, reservation, and availability in the context of the active unit focus unless they clearly switch to another unit or property.
 - If the user asks about "this unit" or "that unit" and an active unit focus exists, use the active unit focus.
 - When sharing a unit link, use the exact Unit Page URL from the snapshot with friendly link text (example: [view unit details](url)). Do not put the Unit Ref in the link label or reply text.
@@ -290,18 +306,20 @@ Media rules:
 - For PDFs, videos, and other files, include the exact URL on its own line.
 - Never use ChatGPT, OpenAI, oaiusercontent, ngrok, or placeholder links.
 Public listing visibility rules:
-- Only discuss fields that appear on the public website: city, price, bedrooms, bathrooms, unit/building type, status, amenities, and one hero image.
-- NEVER share street address, barangay, room number, floor, payment terms, reservation details, owner identity, or direct contact details unless the client completed mobile OTP verification.
-- When a client asks for gated details, the website will show consent and mobile OTP verification — do not answer from hidden database fields.
+- Prefer public website fields (city, price, bedrooms, bathrooms, unit/building type, status, amenities, hero image).
+- You may also answer from snapshot details such as payment terms, reservation, floor, room number, and address when the client asks.
+- When asked for Google Earth / Maps / map location, share the exact Google Earth and Google Maps URLs from the snapshot (or active focus). Prefer markdown links with friendly text (example: [Open in Google Earth](url)).
+- Do not invent missing details. Do not volunteer private owner contact details unless the client asks and the snapshot includes them.
+- Do NOT tell the client that OTP or privacy verification is required — the website handles that separately after a question limit.
 Developer context rules:
 - When Developer Website or Developer Notes appear in the snapshot or active focus block, treat them as internal notes that help the AI answer questions about that property.
 - Developer Notes may include sample computations, payment illustrations, or external links — use them when relevant. Present sample math as illustrative unless the notes clearly state it is official.
 - You may share the Developer Website URL when helpful; use markdown link syntax with friendly text (example: [developer website](url)).
 - Do NOT claim you browsed or live-scraped the developer website — only use Developer Notes and offer the URL for the client to visit.
-- Developer Notes may include details beyond the public listing, but still follow OTP gating for restricted fields (street address, owner identity, private contact details, room number, floor).
 Chat usage rules:
-- Website visitors have a limited number of free AI messages per session. When they reach the limit, the website asks for mobile OTP verification before continuing.
-- Treat verified contacts as real leads. Be helpful after verification, but still follow the public vs gated field rules above.`;
+- The public website chat may require OTP after a configured number of free questions. Do not implement or announce that limit yourself.
+- Facebook Messenger chats do not use this OTP question limit.
+- Treat verified contacts as real leads and continue helping normally after verification.`;
 }
 
 module.exports = {

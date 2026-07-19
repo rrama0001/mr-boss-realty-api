@@ -223,6 +223,10 @@ model company_profile {
 model website_settings {
   id                             Int      @id @default(1)
   property_page_records_per_page Int      @default(15)
+  /// NULL = OTP disabled. Positive = require OTP after this many client questions.
+  otp_trigger_question_count     Int?
+  /// NULL = no auto-delete. Positive = clear idle website chat UI after this many hours.
+  chat_idle_ttl_hours            Int?
   created_at                     DateTime @default(now())
   updated_at                     DateTime @updatedAt
 }

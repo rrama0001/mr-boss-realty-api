@@ -1,12 +1,26 @@
-function isOtpVerificationEnabled() {
-  const raw = process.env.AI_OTP_VERIFICATION_ENABLED;
-  if (raw === undefined || raw === '') {
-    return false;
-  }
+const { prisma } = require('../prisma/prismaClient');
+const {
+  getOrCreateWebsiteSettings,
+  parseOtpTriggerQuestionCount,
+} = require('./websiteSettings');
 
-  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+/**
+ * OTP is controlled from Admin → Settings → Website:
+ * `otp_trigger_question_count` empty/null = disabled; a number = require OTP after that many
+ * client questions on the **website chat only** (not Facebook Messenger).
+ */
+async function getOtpTriggerQuestionCount() {
+  const settings = await getOrCreateWebsiteSettings(prisma);
+  const count = parseOtpTriggerQuestionCount(settings.otp_trigger_question_count);
+  return count === undefined ? null : count;
+}
+
+async function isOtpVerificationEnabled() {
+  const count = await getOtpTriggerQuestionCount();
+  return count != null;
 }
 
 module.exports = {
+  getOtpTriggerQuestionCount,
   isOtpVerificationEnabled,
 };

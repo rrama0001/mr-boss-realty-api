@@ -29,9 +29,18 @@ function recordTokenUsage(userKey, tokens = 0) {
   return usage;
 }
 
-function isQuotaExceeded(userKey) {
+function isQuotaExceeded(userKey, messageLimit = null) {
   const usage = getUsage(userKey);
+  if (messageLimit != null) {
+    return usage.messageCount >= messageLimit;
+  }
+
   return usage.messageCount >= getMessageLimit() || usage.tokenCount >= getTokenLimit();
+}
+
+function isQuestionLimitReached(userKey, questionLimit) {
+  if (questionLimit == null) return false;
+  return getUsage(userKey).messageCount >= questionLimit;
 }
 
 function getUsageSnapshot(userKey) {
@@ -58,6 +67,7 @@ module.exports = {
   getMessageLimit,
   getTokenLimit,
   getUsageSnapshot,
+  isQuestionLimitReached,
   isQuotaExceeded,
   recordTokenUsage,
   recordUserMessage,

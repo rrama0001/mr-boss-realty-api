@@ -1,13 +1,14 @@
 const { prisma } = require('../prisma/prismaClient');
 const { isShareableMediaUrl } = require('./aiPropertySnapshot');
-const { deleteStoredUploadFile, normalizeStoredUploadUrl } = require('./uploadUrls');
+const { deleteStoredUploadFile, normalizeStoredUploadUrl, uploadUrlKey } = require('./uploadUrls');
 
 const ASSET_KIND_LOGO = 'logo';
 
 function isLogoAsset(asset = {}) {
     if (asset.kind === ASSET_KIND_LOGO) return true;
     if (asset.kind && asset.kind !== ASSET_KIND_LOGO) return false;
-    return /\/logo\.(jpe?g|png|webp|gif|svg)(\?|#|$)/i.test(String(asset.image_link || ''));
+    // legacy fixed names (logo.jpg) and unique replacements (logo-<uuid>.jpg)
+    return /\/logo(?:-[a-f0-9-]+)?\.(jpe?g|png|webp|gif|svg)(\?|#|$)/i.test(String(asset.image_link || ''));
 }
 
 function pickProjectLogo(project = {}) {
@@ -48,15 +49,17 @@ async function deleteStoredLogoFile(imageLink) {
 
 async function upsertProjectLogo(projectId, publicUrl) {
     const existing = await findProjectLogoAsset(projectId);
+    const nextUrl = normalizeStoredUploadUrl(publicUrl);
 
     if (existing) {
-        if (existing.image_link !== publicUrl) {
-            await deleteStoredLogoFile(existing.image_link);
+        const previous = existing.image_link || '';
+        if (uploadUrlKey(previous) !== uploadUrlKey(nextUrl)) {
+            await deleteStoredLogoFile(previous);
         }
 
         return prisma.assets.update({
             where: { id: existing.id },
-            data: { image_link: publicUrl, kind: ASSET_KIND_LOGO },
+            data: { image_link: nextUrl, kind: ASSET_KIND_LOGO },
         });
     }
 
@@ -65,7 +68,7 @@ async function upsertProjectLogo(projectId, publicUrl) {
             project_id: projectId,
             unit_id: null,
             kind: ASSET_KIND_LOGO,
-            image_link: publicUrl,
+            image_link: nextUrl,
         },
     });
 }

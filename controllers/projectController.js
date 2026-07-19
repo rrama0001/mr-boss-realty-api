@@ -1,5 +1,6 @@
 // api/controllers/projectController.js
 const path = require('path');
+const crypto = require('crypto');
 const { prisma } = require('../prisma/prismaClient');
 const { deriveProjectStatus } = require('../services/buildingStatuses');
 const { isShareableMediaUrl } = require('../services/aiPropertySnapshot');
@@ -493,7 +494,8 @@ exports.uploadLogo = async (req, res) => {
     const stored = await persistUploadedFile(
       req.file,
       path.posix.join('projects', String(projectId)),
-      { filename: 'logo.jpg' },
+      // Unique key per upload so replace changes the public URL (avoids CDN/browser cache of logo.jpg).
+      { filename: `logo-${crypto.randomUUID()}.jpg` },
     );
     const asset = await upsertProjectLogo(projectId, stored.publicUrl);
 

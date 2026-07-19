@@ -59,7 +59,7 @@ function markConsentDeclined(userKey) {
   clearSession(userKey);
 }
 
-function setContact(userKey, contact, code = null) {
+function setContact(userKey, contact, code = null, channel = 'sms') {
   const session = getSession(userKey);
   if (!session) return null;
 
@@ -71,7 +71,7 @@ function setContact(userKey, contact, code = null) {
     ...session,
     status: 'otp_pending',
     contact: String(contact || '').trim(),
-    contactChannel: 'sms',
+    contactChannel: channel === 'email' ? 'email' : 'sms',
     otpHash,
     otpExpiresAt,
   });

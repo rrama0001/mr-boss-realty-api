@@ -3,6 +3,7 @@ const { parseLegacyUnitRef } = require('./unitSlug');
 const { getPublicProjectDisplayName } = require('./projectPublicDisplay');
 const { formatDeveloperAiLines } = require('./aiDeveloperContext');
 const { buildListingDetailPath, projectMatchesUrlSegments } = require('./projectPublicUrl');
+const { formatMapLinksForAi } = require('./mapLinks');
 
 const PUBLIC_SITE_URL = (process.env.PUBLIC_SITE_URL || 'https://www.mrbossrealty.com').replace(/\/$/, '');
 
@@ -140,6 +141,8 @@ function formatFocusedBuildingSummary(entry) {
     `Developer: ${project.developer || 'n/a'}`,
     ...formatDeveloperAiLines(project),
     `City: ${project.city || 'n/a'}`,
+    `Address: ${project.location || 'n/a'}`,
+    ...formatMapLinksForAi(project),
     `Building: ${building.building_name || 'n/a'}`,
     `Building Type: ${building.building_type || 'n/a'}`,
     `Building Status: ${building.status || 'n/a'}`,
@@ -179,7 +182,7 @@ function formatFocusedBuildingSummary(entry) {
 
   if (project.is_private_on_website) {
     lines.push(
-      'Privacy: This is a private property listing. Never mention the owner name or private contact details. Refer to the property only as "Private Property".',
+      'Privacy: This is a private property listing. Never mention the owner name or private contact details. Use "Private Property" as the display name only — still share City and Address when asked.',
     );
   }
 

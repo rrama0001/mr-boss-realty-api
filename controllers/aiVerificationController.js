@@ -7,8 +7,7 @@ const {
   buildVerificationOtpDevReply,
   buildVerifiedRestrictedReply,
   buildQuotaVerifiedReply,
-  isValidMobile,
-  normalizeMobileNumber,
+  normalizeContactValue,
 } = require('../services/aiRestrictedInfo');
 const {
   getSession,
@@ -19,6 +18,7 @@ const {
   verifyOtp,
 } = require('../services/aiVerificationStore');
 const { sendOtpSms } = require('../services/smsOtpDelivery');
+const { sendOtpEmail } = require('../services/emailOtpDelivery');
 const { isOtpVerificationEnabled } = require('../services/aiVerificationConfig');
 const { getChatMessages } = require('../services/aiConversationState');
 const { resetUsage } = require('../services/aiUsageLimiter');
@@ -64,13 +64,13 @@ function activeFocusFromSession(session, userKey) {
   };
 }
 
-function rejectWhenDisabled(res) {
-  if (isOtpVerificationEnabled()) {
+async function rejectWhenDisabled(res) {
+  if (await isOtpVerificationEnabled()) {
     return false;
   }
 
   res.status(503).json({
-    error: 'Mobile OTP verification is currently disabled.',
+    error: 'OTP verification is currently disabled.',
     otpVerificationEnabled: false,
   });
   return true;
@@ -78,7 +78,7 @@ function rejectWhenDisabled(res) {
 
 exports.postConsent = async (req, res) => {
   try {
-    if (rejectWhenDisabled(res)) {
+    if (await rejectWhenDisabled(res)) {
       return;
     }
     const { senderId, source, agreed } = req.body;
@@ -112,7 +112,7 @@ exports.postConsent = async (req, res) => {
 
 exports.postContact = async (req, res) => {
   try {
-    if (rejectWhenDisabled(res)) {
+    if (await rejectWhenDisabled(res)) {
       return;
     }
     const { senderId, source, contact } = req.body;
@@ -123,24 +123,31 @@ exports.postContact = async (req, res) => {
       return res.status(400).json({ error: 'No pending contact request.' });
     }
 
-    const mobile = normalizeMobileNumber(contact);
-    if (!isValidMobile(contact)) {
-      return res.status(400).json({ error: 'Please provide a valid Philippine mobile number (e.g. 09171234567).' });
+    const normalized = normalizeContactValue(contact);
+    if (!normalized) {
+      return res.status(400).json({
+        error: 'Please provide a valid Philippine mobile number (e.g. 09171234567) or email address.',
+      });
     }
 
     const code = generateOtpCode();
+    const isEmail = normalized.channel === 'email';
 
     try {
-      const delivery = await sendOtpSms(mobile, code);
+      const delivery = isEmail
+        ? await sendOtpEmail(normalized.contact, code)
+        : await sendOtpSms(normalized.contact, code);
 
       if (!delivery.delivered) {
         if (process.env.NODE_ENV === 'production') {
           return res.status(503).json({
-            error: 'We could not send the verification SMS right now. Please try again later.',
+            error: isEmail
+              ? 'We could not send the verification email right now. Please try again later.'
+              : 'We could not send the verification SMS right now. Please try again later.',
           });
         }
 
-        setContact(userKey, mobile, code);
+        setContact(userKey, normalized.contact, code, normalized.channel);
         const updated = getSession(userKey);
 
         return res.json({
@@ -152,13 +159,15 @@ exports.postContact = async (req, res) => {
         });
       }
     } catch (err) {
-      console.error('OTP SMS delivery failed:', err);
+      console.error('OTP delivery failed:', err);
       return res.status(503).json({
-        error: 'We could not send the verification SMS. Check your mobile number or try again in a moment.',
+        error: isEmail
+          ? 'We could not send the verification email. Check the address or try again in a moment.'
+          : 'We could not send the verification SMS. Check your mobile number or try again in a moment.',
       });
     }
 
-    setContact(userKey, mobile, code);
+    setContact(userKey, normalized.contact, code, normalized.channel);
     const updated = getSession(userKey);
 
     return res.json({
@@ -173,7 +182,7 @@ exports.postContact = async (req, res) => {
 
 exports.postVerifyOtp = async (req, res) => {
   try {
-    if (rejectWhenDisabled(res)) {
+    if (await rejectWhenDisabled(res)) {
       return;
     }
     const { senderId, source, code, pageUrl } = req.body;
@@ -210,8 +219,25 @@ exports.postVerifyOtp = async (req, res) => {
     }
 
     if (session.topic === 'chat_quota') {
+      const thankYou = buildQuotaVerifiedReply();
+      let answer = '';
+
+      try {
+        const { continueAfterQuotaVerification } = require('./aiController');
+        answer = await continueAfterQuotaVerification(
+          userKey,
+          pageUrl || session.pageUrl || '',
+        );
+      } catch (continueError) {
+        console.error('Failed to answer pending question after OTP:', continueError);
+      }
+
+      const reply = answer
+        ? `${thankYou}\n\n${answer}`
+        : thankYou;
+
       return res.json({
-        reply: buildQuotaVerifiedReply(),
+        reply,
         verificationRequired: false,
       });
     }
@@ -242,7 +268,7 @@ exports.postVerifyOtp = async (req, res) => {
 
 exports.postCancel = async (req, res) => {
   try {
-    if (rejectWhenDisabled(res)) {
+    if (await rejectWhenDisabled(res)) {
       return;
     }
     const { senderId, source } = req.body;
