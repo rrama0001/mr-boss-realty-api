@@ -1,30 +1,19 @@
 const { STATUS_LABELS } = require('../constants/buildingStatuses');
 const { formatLeadForAdmin, resolvePropertyLabel } = require('./leadService');
 const { getAiTokenUsageStats } = require('./aiTokenUsage');
+const {
+  dateKeyToUtcDate,
+  emptyDailyKeys,
+  formatBusinessDateKey,
+  shiftDateKey,
+} = require('./businessDate');
 
 const LEAD_TREND_DAYS = 30;
 const RECENT_LEADS_LIMIT = 8;
 const TOP_UNIT_TYPES = 8;
 
-function startOfUtcDay(date) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-}
-
-function formatDayKey(date) {
-  return startOfUtcDay(date).toISOString().slice(0, 10);
-}
-
 function emptyLeadTrend(days = LEAD_TREND_DAYS) {
-  const today = startOfUtcDay(new Date());
-  const trend = [];
-
-  for (let i = days - 1; i >= 0; i -= 1) {
-    const day = new Date(today);
-    day.setUTCDate(today.getUTCDate() - i);
-    trend.push({ date: formatDayKey(day), count: 0 });
-  }
-
-  return trend;
+  return emptyDailyKeys(days).map((date) => ({ date, count: 0 }));
 }
 
 function toCountMap(rows, keyField = 'key') {
@@ -58,12 +47,10 @@ function collapseTopItems(items, limit) {
 }
 
 async function buildLeadStats(prisma) {
-  const now = new Date();
-  const trendStart = startOfUtcDay(now);
-  trendStart.setUTCDate(trendStart.getUTCDate() - (LEAD_TREND_DAYS - 1));
-
-  const weekStart = new Date(now);
-  weekStart.setUTCDate(weekStart.getUTCDate() - 7);
+  const byDay = emptyLeadTrend();
+  const trendStart = dateKeyToUtcDate(byDay[0].date);
+  const weekStartKey = shiftDateKey(byDay[byDay.length - 1].date, -6);
+  const weekStart = dateKeyToUtcDate(weekStartKey);
 
   const [total, last7Days, recentRows, trendRows] = await Promise.all([
     prisma.leads.count(),
@@ -79,11 +66,10 @@ async function buildLeadStats(prisma) {
     }),
   ]);
 
-  const byDay = emptyLeadTrend();
   const dayIndex = new Map(byDay.map((item, index) => [item.date, index]));
 
   for (const row of trendRows) {
-    const key = formatDayKey(new Date(row.verified_at));
+    const key = formatBusinessDateKey(new Date(row.verified_at));
     const index = dayIndex.get(key);
     if (index != null) {
       byDay[index].count += 1;

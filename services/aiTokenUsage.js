@@ -1,30 +1,21 @@
+const {
+  dateKeyToUtcDate,
+  dbDateToKey,
+  emptyDailyKeys,
+  formatBusinessDateKey,
+  shiftDateKey,
+} = require('./businessDate');
+
 const TREND_DAYS = 30;
 
-function startOfUtcDay(date = new Date()) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-}
-
-function formatDayKey(date) {
-  return startOfUtcDay(date).toISOString().slice(0, 10);
-}
-
 function emptyTokenTrend(days = TREND_DAYS) {
-  const today = startOfUtcDay(new Date());
-  const trend = [];
-
-  for (let i = days - 1; i >= 0; i -= 1) {
-    const day = new Date(today);
-    day.setUTCDate(today.getUTCDate() - i);
-    trend.push({
-      date: formatDayKey(day),
-      tokens: 0,
-      requests: 0,
-      promptTokens: 0,
-      completionTokens: 0,
-    });
-  }
-
-  return trend;
+  return emptyDailyKeys(days).map((date) => ({
+    date,
+    tokens: 0,
+    requests: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+  }));
 }
 
 function normalizeUsage(usage = {}) {
@@ -47,7 +38,7 @@ async function recordDailyTokenUsage(prisma, usage = {}) {
     return null;
   }
 
-  const usageDate = startOfUtcDay(new Date());
+  const usageDate = dateKeyToUtcDate(formatBusinessDateKey(new Date()));
 
   return prisma.ai_token_usage_daily.upsert({
     where: { usage_date: usageDate },
@@ -69,11 +60,9 @@ async function recordDailyTokenUsage(prisma, usage = {}) {
 
 async function getAiTokenUsageStats(prisma, days = TREND_DAYS) {
   const byDay = emptyTokenTrend(days);
-  const trendStart = startOfUtcDay(new Date());
-  trendStart.setUTCDate(trendStart.getUTCDate() - (days - 1));
-
-  const weekStart = startOfUtcDay(new Date());
-  weekStart.setUTCDate(weekStart.getUTCDate() - 6);
+  const endKey = byDay[byDay.length - 1]?.date;
+  const trendStart = dateKeyToUtcDate(byDay[0].date);
+  const weekStartKey = shiftDateKey(endKey, -6);
 
   const rows = await prisma.ai_token_usage_daily.findMany({
     where: { usage_date: { gte: trendStart } },
@@ -83,7 +72,7 @@ async function getAiTokenUsageStats(prisma, days = TREND_DAYS) {
   const dayIndex = new Map(byDay.map((item, index) => [item.date, index]));
 
   for (const row of rows) {
-    const key = formatDayKey(new Date(row.usage_date));
+    const key = dbDateToKey(row.usage_date);
     const index = dayIndex.get(key);
     if (index == null) continue;
 
@@ -96,7 +85,7 @@ async function getAiTokenUsageStats(prisma, days = TREND_DAYS) {
   const totalTokens = byDay.reduce((sum, day) => sum + day.tokens, 0);
   const totalRequests = byDay.reduce((sum, day) => sum + day.requests, 0);
   const last7DaysTokens = byDay
-    .filter((day) => day.date >= formatDayKey(weekStart))
+    .filter((day) => day.date >= weekStartKey)
     .reduce((sum, day) => sum + day.tokens, 0);
 
   return {
