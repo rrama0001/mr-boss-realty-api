@@ -156,6 +156,7 @@ async function saveVerifiedLead(prisma, userKey, session) {
 
 module.exports = {
   formatLeadForAdmin,
+  resolvePropertyLabel,
   listLeadsForAdmin,
   countLeadsForAdmin,
   saveVerifiedLead,

@@ -21,24 +21,13 @@ function isAdmin(req, res, next) {
   next();
 }
 
-// --- Admin Dashboard Route ---
+// --- Admin Dashboard Route (legacy; prefer GET /api/dashboard/stats) ---
 router.get("/dashboard", checkAccess, isAdmin, async (req, res) => {
   try {
-    // Example data: list of users
-    const users = await prisma.users.findMany({
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        role: true,
-        can_login: true,
-      },
-    });
-
-    res.status(200).json({
-      message: "Admin dashboard data retrieved successfully",
-      users,
-    });
+    const { getDashboardStats } = require('../services/dashboardStats');
+    const { prisma: softDeletePrisma } = require('../prisma/prismaClient');
+    const stats = await getDashboardStats(softDeletePrisma, { includeLeads: true });
+    res.status(200).json(stats);
   } catch (error) {
     console.error("❌ Error fetching admin dashboard data:", error);
     res.status(500).json({ message: "Internal server error" });

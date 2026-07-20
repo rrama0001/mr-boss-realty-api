@@ -107,6 +107,7 @@ app.use('/api', (req, res, next) => {
 // ✅ API Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/units', require('./routes/units'));
 app.use('/api/unit-types', require('./routes/unitTypes'));
 app.use('/api/building-types', require('./routes/buildingTypes'));
