@@ -1,5 +1,6 @@
 const { STATUS_LABELS } = require('../constants/buildingStatuses');
 const { formatLeadForAdmin, resolvePropertyLabel } = require('./leadService');
+const { getAiTokenUsageStats } = require('./aiTokenUsage');
 
 const LEAD_TREND_DAYS = 30;
 const RECENT_LEADS_LIMIT = 8;
@@ -115,6 +116,7 @@ async function getDashboardStats(prisma, { includeLeads = false } = {}) {
     unitsTotal,
     unitsByListingType,
     unitsByType,
+    aiUsage,
   ] = await Promise.all([
     prisma.projects.count(),
     prisma.projects.count({ where: { is_featured: true } }),
@@ -143,6 +145,7 @@ async function getDashboardStats(prisma, { includeLeads = false } = {}) {
       by: ['unit_type'],
       _count: { _all: true },
     }),
+    getAiTokenUsageStats(prisma),
   ]);
 
   const listingTypeLabels = {
@@ -181,6 +184,7 @@ async function getDashboardStats(prisma, { includeLeads = false } = {}) {
       byListingType: mapWithLabels(listingTypeMap, listingTypeLabels),
       byUnitType: unitTypeItems,
     },
+    aiUsage,
     leads: null,
   };
 

@@ -199,6 +199,20 @@ model ai_settings {
   created_at  DateTime @default(now())
 }
 
+/// Daily aggregates of OpenAI completion token usage from website AI chat.
+model ai_token_usage_daily {
+  id                Int      @id @default(autoincrement())
+  usage_date        DateTime @unique @db.Date
+  prompt_tokens     Int      @default(0)
+  completion_tokens Int      @default(0)
+  total_tokens      Int      @default(0)
+  request_count     Int      @default(0)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  @@index([usage_date])
+}
+
 model company_profile {
   id              Int      @id @default(1)
   company_name    String?

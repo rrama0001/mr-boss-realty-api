@@ -24,6 +24,7 @@ const {
     recordUserMessage,
     clearUsage,
 } = require('../services/aiUsageLimiter');
+const { recordDailyTokenUsage } = require('../services/aiTokenUsage');
 const {
     clearConversationState,
     conversationBuildingFocus,
@@ -37,6 +38,13 @@ const prisma = new PrismaClient();
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
+
+function trackCompletionUsage(userKey, usage) {
+    recordTokenUsage(userKey, usage?.total_tokens || 0);
+    recordDailyTokenUsage(prisma, usage).catch((error) => {
+        console.error('Failed to persist AI token usage:', error);
+    });
+}
 
 function conversationHasEnded(text) {
     const endings = [
@@ -237,7 +245,7 @@ exports.getReply = async (req, res) => {
             temperature: aiSettings?.temperature || 0.3,
         });
 
-        recordTokenUsage(userKey, completion.usage?.total_tokens || 0);
+        trackCompletionUsage(userKey, completion.usage);
 
         const aiReply = sanitizeClientReply(
             completion.choices[0].message.content,
@@ -373,7 +381,7 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
         temperature: aiSettings?.temperature || 0.3,
     });
 
-    recordTokenUsage(userKey, completion.usage?.total_tokens || 0);
+    trackCompletionUsage(userKey, completion.usage);
 
     const aiReply = sanitizeClientReply(
         completion.choices[0].message.content,
