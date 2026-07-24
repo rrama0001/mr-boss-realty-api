@@ -149,6 +149,7 @@ function formatPublicUnitListItem(unit) {
     building_name: unit.buildings?.building_name || null,
     building_status: unit.buildings?.status || null,
     ...publicNameFields,
+    developer: unit.projects?.developer || null,
     project_slug: unit.projects?.slug || null,
     project_city: unit.projects?.city || null,
     project_location: unit.projects?.location || null,
