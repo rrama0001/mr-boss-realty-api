@@ -4,20 +4,24 @@ const { getPublicProjectDisplayName } = require('./projectPublicDisplay');
 const { formatDeveloperAiLines } = require('./aiDeveloperContext');
 const { buildListingDetailPath, buildPropertyDetailPath } = require('./projectPublicUrl');
 const { formatMapLinksForAi } = require('./mapLinks');
-
-const PUBLIC_SITE_URL = (process.env.PUBLIC_SITE_URL || 'https://www.mrbossrealty.com').replace(/\/$/, '');
+const { getWebsiteUrl } = require('../config/siteUrls');
 
 const UNIT_URL_PATTERN = /\/(?:units|properties)\/(?:[a-z0-9-]+\/){1,2}([a-f0-9]{8}|u-\d+|\d+)/gi;
 const UNIT_PHRASE_PATTERN = /\bunit\s+([a-f0-9]{8}|u-\d+|\d+)\b/gi;
 
+function getPublicSiteUrl() {
+  // Prefer WEBSITE_URL (local/prod). PUBLIC_SITE_URL remains an explicit override.
+  return (process.env.PUBLIC_SITE_URL || getWebsiteUrl()).replace(/\/$/, '');
+}
+
 function getPublicPropertyUrl(project) {
   if (!project) return null;
-  return `${PUBLIC_SITE_URL}${buildPropertyDetailPath(project)}`;
+  return `${getPublicSiteUrl()}${buildPropertyDetailPath(project)}`;
 }
 
 function getPublicUnitUrl(project, unitRef) {
   if (!project || !unitRef) return null;
-  return `${PUBLIC_SITE_URL}${buildListingDetailPath(project, unitRef)}`;
+  return `${getPublicSiteUrl()}${buildListingDetailPath(project, unitRef)}`;
 }
 
 function flattenUnitsFromProjects(projects) {
@@ -117,7 +121,11 @@ function formatFocusedUnitSummary(entry) {
     `Bedrooms: ${unit.bedrooms ?? 'n/a'}`,
     `Bathrooms: ${unit.bathrooms ?? 'n/a'}`,
     `Area: ${unit.unit_size || 'n/a'}`,
-    `Price: ${unit.unit_price != null ? unit.unit_price.toLocaleString() : 'No price'}`,
+    `Listing Type: ${unit.listing_type || 'sale'}`,
+    `Sale Price: ${unit.unit_price != null ? unit.unit_price.toLocaleString() : 'n/a'}`,
+    `Monthly Rent: ${unit.monthly_rent != null ? unit.monthly_rent.toLocaleString() : 'n/a'}`,
+    `Daily Rent: ${unit.daily_rent != null ? unit.daily_rent.toLocaleString() : 'n/a'}`,
+    `Hourly Rent: ${unit.hourly_rent != null ? unit.hourly_rent.toLocaleString() : 'n/a'}`,
     `Payment Terms: ${unit.payment_terms || 'n/a'}`,
     `Payment Terms Link: ${unit.payment_terms_link || 'n/a'}`,
     `Reservation Fee: ${unit.reservation_fee ?? 'n/a'}`,
@@ -125,6 +133,7 @@ function formatFocusedUnitSummary(entry) {
     `Monthly Dues: ${unit.monthly_dues ?? 'n/a'}`,
     `Monthly Dues Per Sqm: ${unit.monthly_dues_per_sqm ?? 'n/a'}`,
     `Pets Allowed: ${unit.is_pet_allowed ?? 'n/a'}`,
+    `Allowed Pet Size: ${unit.allowed_pet_size || 'n/a'}`,
     `Smoking Allowed: ${unit.is_allowed_smoking ?? 'n/a'}`,
   ];
 
@@ -132,8 +141,19 @@ function formatFocusedUnitSummary(entry) {
     lines.push(`Images/Videos Link: ${unit.images_videos_link}`);
   }
 
+  if (unit.cover_image_url) {
+    lines.push(`Cover Image: ${unit.cover_image_url}`);
+  }
+
   if (unit.ai_notes) {
     lines.push(`Unit Notes (use when relevant): ${unit.ai_notes}`);
+  }
+
+  const deliverables = (unit.deliverables || [])
+    .filter((item) => item?.item)
+    .map((item) => (item.item_type ? `${item.item} (${item.item_type})` : item.item));
+  if (deliverables.length) {
+    lines.push(`Deliverables: ${deliverables.join('; ')}`);
   }
 
   if (project.is_private_on_website) {

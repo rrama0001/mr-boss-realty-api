@@ -8,10 +8,10 @@ const API_ROOT = path.join(__dirname, '..');
 
 stopDevServer({ quiet: true });
 
-const nodemon = spawn('npx', ['nodemon', 'server.js'], {
+const nodemonBin = require.resolve('nodemon/bin/nodemon');
+const nodemon = spawn(process.execPath, [nodemonBin, 'server.js'], {
     cwd: API_ROOT,
     stdio: 'inherit',
-    shell: true,
 });
 
 let exiting = false;

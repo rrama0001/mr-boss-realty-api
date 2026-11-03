@@ -150,6 +150,15 @@ const server = app.listen(PORT, () => {
 
     console.log(`✅ Backend running at http://localhost:${PORT}`);
     logDeliveryStatusOnStartup();
+
+    // Keep building-type catalog in sync (adds Lot/Land types without a full seed).
+    Promise.all([
+        require('./services/buildingTypes').seedBuildingTypes(),
+        require('./services/unitTypes').seedUnitTypes(),
+    ]).catch((err) => {
+        console.warn('Catalog sync skipped:', err.message || err);
+    });
+
     if (process.env.NODE_ENV === 'production') {
         console.log(`✅ Primary URL: ${process.env.API_URL || 'Not set'}`);
     }

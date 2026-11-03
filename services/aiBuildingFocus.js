@@ -4,15 +4,19 @@ const { getPublicProjectDisplayName } = require('./projectPublicDisplay');
 const { formatDeveloperAiLines } = require('./aiDeveloperContext');
 const { buildListingDetailPath, projectMatchesUrlSegments } = require('./projectPublicUrl');
 const { formatMapLinksForAi } = require('./mapLinks');
-
-const PUBLIC_SITE_URL = (process.env.PUBLIC_SITE_URL || 'https://www.mrbossrealty.com').replace(/\/$/, '');
+const { getWebsiteUrl } = require('../config/siteUrls');
 
 const PROPERTY_LISTING_URL_PATTERN = /\/properties\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-f0-9]{8}|\d+)/gi;
 const LEGACY_PROPERTY_LISTING_URL_PATTERN = /\/properties\/([a-z0-9-]+)\/([a-f0-9]{8}|\d+)/gi;
 
+function getPublicSiteUrl() {
+  // Prefer WEBSITE_URL (local/prod). PUBLIC_SITE_URL remains an explicit override.
+  return (process.env.PUBLIC_SITE_URL || getWebsiteUrl()).replace(/\/$/, '');
+}
+
 function getPublicBuildingUrl(project, buildingRef) {
   if (!project || !buildingRef) return null;
-  return `${PUBLIC_SITE_URL}${buildListingDetailPath(project, buildingRef)}`;
+  return `${getPublicSiteUrl()}${buildListingDetailPath(project, buildingRef)}`;
 }
 
 function getBuildingRef(building) {

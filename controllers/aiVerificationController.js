@@ -26,11 +26,18 @@ const { saveVerifiedLead } = require('../services/leadService');
 
 async function loadProjects() {
   return prisma.projects.findMany({
+    where: { deleted_at: null },
     include: {
       buildings: {
+        where: { deleted_at: null },
         include: {
+          deliverables: true,
           units: {
-            include: { assets: true },
+            where: { deleted_at: null },
+            include: {
+              assets: true,
+              deliverables: true,
+            },
           },
         },
       },

@@ -58,11 +58,19 @@ npx prisma generate
 npx prisma migrate deploy
 ```
 
-Seed demo data (projects, buildings, units, admin user):
+Seed demo data (projects, buildings, units, admin user) — **local Postgres only** by default:
 
 ```bash
 npm run seed
 ```
+
+`prisma/seed.js` refuses to run when `NODE_ENV=production` or when `DATABASE_URL` is a remote host (including Neon). To force a seed on a remote/dev branch intentionally:
+
+```bash
+ALLOW_DB_SEED=true npm run seed
+```
+
+Do not use that override against production.
 
 ## Start the API (development)
 

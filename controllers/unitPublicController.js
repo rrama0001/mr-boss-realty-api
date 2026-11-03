@@ -256,6 +256,7 @@ exports.getPublicListing = async (req, res) => {
         buildings: {
           select: {
             building_name: true,
+            building_type: true,
             status: true,
             is_whole_property_listing: true,
           },

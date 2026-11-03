@@ -39,6 +39,24 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
+const AI_INVENTORY_INCLUDE = {
+    buildings: {
+        where: { deleted_at: null },
+        include: {
+            deliverables: true,
+            units: {
+                where: { deleted_at: null },
+                include: {
+                    assets: true,
+                    deliverables: true,
+                },
+            },
+        },
+    },
+    deliverables: true,
+    assets: true,
+};
+
 function trackCompletionUsage(userKey, usage) {
     recordTokenUsage(userKey, usage?.total_tokens || 0);
     recordDailyTokenUsage(prisma, usage).catch((error) => {
@@ -153,17 +171,8 @@ exports.getReply = async (req, res) => {
         const aiModel = aiSettings?.model || 'gpt-4o-mini';
 
         const projects = await prisma.projects.findMany({
-            include: {
-                buildings: {
-                    include: {
-                        units: {
-                            include: { assets: true },
-                        },
-                    },
-                },
-                deliverables: true,
-                assets: true,
-            },
+            where: { deleted_at: null },
+            include: AI_INVENTORY_INCLUDE,
         });
 
         const companyProfile = toPublicCompanyProfile(await getOrCreateCompanyProfile(prisma));
@@ -272,9 +281,21 @@ exports.getReply = async (req, res) => {
         });
     } catch (error) {
         console.error('AI error details:', error);
-        res.status(500).json({
-            error: 'Failed to generate reply.',
+
+        const status = Number(error?.status || error?.response?.status || 500);
+        const code = String(error?.code || error?.error?.code || '').toLowerCase();
+        const type = String(error?.type || error?.error?.type || '').toLowerCase();
+        const isQuotaError = status === 429
+            || code.includes('insufficient_quota')
+            || code.includes('credit_balance_exhausted')
+            || type.includes('insufficient_quota');
+
+        res.status(isQuotaError ? 503 : 500).json({
+            error: isQuotaError
+                ? 'Mr. Boss AI is temporarily unavailable because the OpenAI account has no remaining credits. Please add billing credits and try again.'
+                : 'Failed to generate reply.',
             details: error.message || error,
+            code: isQuotaError ? 'openai_quota_exhausted' : undefined,
         });
     }
 };
@@ -325,17 +346,8 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
     const aiModel = aiSettings?.model || 'gpt-4o-mini';
 
     const projects = await prisma.projects.findMany({
-        include: {
-            buildings: {
-                include: {
-                    units: {
-                        include: { assets: true },
-                    },
-                },
-            },
-            deliverables: true,
-            assets: true,
-        },
+        where: { deleted_at: null },
+        include: AI_INVENTORY_INCLUDE,
     });
 
     const companyProfile = toPublicCompanyProfile(await getOrCreateCompanyProfile(prisma));

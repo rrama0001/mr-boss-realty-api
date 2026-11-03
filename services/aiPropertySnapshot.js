@@ -25,12 +25,15 @@ function isShareableMediaUrl(url) {
     }
 }
 
-function formatMediaLinks({ imagesVideosLink, assets = [] }) {
+function formatMediaLinks({ imagesVideosLink, assets = [], coverImageUrl = null }) {
     const links = [];
     const { normalizeStoredUploadUrl } = require('./uploadUrls');
 
-    if (isShareableMediaUrl(imagesVideosLink)) {
-        links.push(normalizeStoredUploadUrl(imagesVideosLink.trim()));
+    for (const candidate of [coverImageUrl, imagesVideosLink]) {
+        if (isShareableMediaUrl(candidate)) {
+            const normalized = normalizeStoredUploadUrl(candidate.trim());
+            if (!links.includes(normalized)) links.push(normalized);
+        }
     }
 
     for (const asset of assets) {
@@ -45,6 +48,130 @@ function formatMediaLinks({ imagesVideosLink, assets = [] }) {
     return links;
 }
 
+function formatMoney(value) {
+    if (value == null || value === '') return null;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return String(value);
+    return number.toLocaleString();
+}
+
+function formatDateValue(value) {
+    if (!value) return null;
+    try {
+        return new Date(value).toISOString().slice(0, 10);
+    } catch {
+        return String(value);
+    }
+}
+
+function pushField(parts, label, value, { money = false, date = false } = {}) {
+    if (value == null || value === '') return;
+    let formatted = value;
+    if (money) formatted = formatMoney(value);
+    if (date) formatted = formatDateValue(value);
+    if (formatted == null || formatted === '') return;
+    parts.push(`${label}: ${formatted}`);
+}
+
+function formatDeliverables(deliverables = []) {
+    return (deliverables || [])
+        .filter((item) => item && (item.item || item.name))
+        .map((item) => {
+            const label = item.item || item.name || 'Deliverable';
+            const type = item.item_type || item.description || '';
+            return type ? `${label} (${type})` : label;
+        });
+}
+
+function formatBuildingInventoryFields(building, { indent = '          ' } = {}) {
+    const lines = [];
+    const add = (label, value, opts) => {
+        const parts = [];
+        pushField(parts, label, value, opts);
+        if (parts.length) lines.push(`${indent}${parts[0]}`);
+    };
+
+    add('Building Type', building.building_type);
+    add('Status', building.status);
+    add('Listing Type', building.listing_type);
+    add('Number of Units', building.number_of_units);
+    add('Total Available Units', building.total_available_units);
+    add('Bedrooms', building.bedrooms);
+    add('Bathrooms', building.bathrooms);
+    add('Number of Floors / Stories', building.stories);
+    add('Total Floor Area', building.total_floor_area);
+    add('Typical Room Area', building.typical_room_area);
+    add('Lot Area', building.lot_area);
+    add('Sale Price', building.sale_price, { money: true });
+    add('Monthly Rent', building.monthly_rent, { money: true });
+    add('Daily Rent', building.daily_rent, { money: true });
+    add('Hourly Rent', building.hourly_rent, { money: true });
+    add('Payment Terms', building.payment_terms);
+    add('Payment Terms Link', building.payment_terms_link);
+    add('Reservation Fee', building.reservation_fee, { money: true });
+    add('Reservation Deductible', building.is_reservation_deductible);
+    add('Monthly Dues', building.monthly_dues, { money: true });
+    add('Monthly Dues Per Sqm', building.monthly_dues_per_sqm, { money: true });
+    add('Total Parking', building.total_parking);
+    add('Total Available Parking', building.total_available_parking);
+    add('LTS Completion Date', building.lts_completion_date, { date: true });
+    add('CTS Completion Date', building.cts_completion_date, { date: true });
+    add('Pets Allowed', building.is_pet_allowed);
+    add('Allowed Pet Size', building.allowed_pet_size);
+    add('Smoking Allowed', building.is_allowed_smoking);
+    add('Freebies', building.freebies);
+
+    const deliverables = formatDeliverables(building.deliverables);
+    if (deliverables.length) {
+        lines.push(`${indent}Deliverables: ${deliverables.join('; ')}`);
+    }
+
+    return lines;
+}
+
+function formatUnitInventoryInline(unit) {
+    const parts = [];
+    const add = (label, value, opts) => pushField(parts, label, value, opts);
+
+    add('Room Number', unit.room_number);
+    add('Floor', unit.floor);
+    add('Unit Type', unit.unit_type);
+    add('Area', unit.unit_size);
+    add('Bedrooms', unit.bedrooms);
+    add('Bathrooms', unit.bathrooms);
+    add('Listing Type', unit.listing_type || 'sale');
+    add('Sale Price', unit.unit_price, { money: true });
+    add('Monthly Rent', unit.monthly_rent, { money: true });
+    add('Daily Rent', unit.daily_rent, { money: true });
+    add('Hourly Rent', unit.hourly_rent, { money: true });
+    add('Payment Terms', unit.payment_terms);
+    add('Payment Terms Link', unit.payment_terms_link);
+    add('Reservation Fee', unit.reservation_fee, { money: true });
+    add('Reservation Deductible', unit.is_reservation_deductible);
+    add('Monthly Dues', unit.monthly_dues, { money: true });
+    add('Monthly Dues Per Sqm', unit.monthly_dues_per_sqm, { money: true });
+    add('Pets Allowed', unit.is_pet_allowed);
+    add('Allowed Pet Size', unit.allowed_pet_size);
+    add('Smoking Allowed', unit.is_allowed_smoking);
+    add('Unit Notes', unit.ai_notes);
+
+    const deliverables = formatDeliverables(unit.deliverables);
+    if (deliverables.length) {
+        parts.push(`Deliverables: ${deliverables.join('; ')}`);
+    }
+
+    if (
+        unit.unit_price == null
+        && unit.monthly_rent == null
+        && unit.daily_rent == null
+        && unit.hourly_rent == null
+    ) {
+        parts.push('Price: No price');
+    }
+
+    return parts.join(', ');
+}
+
 function appendWholeBuildingListing(dataText, project, building) {
     const buildingRef = getBuildingRef(building);
     const listingPage = getPublicBuildingUrl(project, buildingRef);
@@ -54,25 +181,7 @@ function appendWholeBuildingListing(dataText, project, building) {
     dataText += `          Internal Listing Ref (never mention to client): ${buildingRef}\n`;
     if (listingPage) dataText += `          Listing Page: ${listingPage}\n`;
     dataText += `          Property: ${publicName}\n`;
-    if (building.building_type) dataText += `          Building Type: ${building.building_type}\n`;
-    if (building.status) dataText += `          Status: ${building.status}\n`;
-    if (building.listing_type) dataText += `          Listing Type: ${building.listing_type}\n`;
-    if (building.bedrooms != null) dataText += `          Bedrooms: ${building.bedrooms}\n`;
-    if (building.bathrooms != null) dataText += `          Bathrooms: ${building.bathrooms}\n`;
-    if (building.stories != null) dataText += `          Number of Floors: ${building.stories}\n`;
-    if (building.number_of_units != null) dataText += `          Number of Rooms: ${building.number_of_units}\n`;
-    if (building.total_floor_area) dataText += `          Total Floor Area: ${building.total_floor_area}\n`;
-    if (building.typical_room_area) dataText += `          Typical Room Area: ${building.typical_room_area}\n`;
-    if (building.sale_price != null) dataText += `          Sale Price: ${building.sale_price.toLocaleString()}\n`;
-    if (building.monthly_rent != null) dataText += `          Monthly Rent: ${building.monthly_rent}\n`;
-    if (building.total_parking != null) dataText += `          Total Parking: ${building.total_parking}\n`;
-    if (building.total_available_parking != null) {
-        dataText += `          Total Available Parking: ${building.total_available_parking}\n`;
-    }
-    if (building.is_pet_allowed != null) dataText += `          Pets Allowed: ${building.is_pet_allowed}\n`;
-    if (building.allowed_pet_size) dataText += `          Allowed Pet Size: ${building.allowed_pet_size}\n`;
-    if (building.is_allowed_smoking != null) dataText += `          Smoking Allowed: ${building.is_allowed_smoking}\n`;
-    if (building.freebies) dataText += `          Freebies: ${building.freebies}\n`;
+    dataText += `${formatBuildingInventoryFields(building).join('\n')}\n`;
 
     const buildingMedia = formatMediaLinks({
         imagesVideosLink: building.images_videos_link,
@@ -168,77 +277,75 @@ function buildPropertySnapshot(projects) {
         }
         if (project.status) dataText += `   Status: ${project.status}\n`;
         if (project.amenities) dataText += `   Amenities: ${project.amenities}\n`;
+        if (!isPrivate && project.loan_type) dataText += `   Loan Type: ${project.loan_type}\n`;
+        if (!isPrivate && project.reservation_requirements) {
+            dataText += `   Reservation Requirements: ${project.reservation_requirements}\n`;
+        }
+        if (project.showroom_location) dataText += `   Showroom Location: ${project.showroom_location}\n`;
 
         const projectMedia = formatMediaLinks({
             imagesVideosLink: project.images_videos_link,
+            coverImageUrl: project.cover_image_url,
             assets: project.assets || [],
         });
         if (projectMedia.length) {
-            dataText += `   Project media URLs: ${projectMedia.slice(0, 1).join(' | ')}\n`;
+            dataText += `   Project media URLs: ${projectMedia.slice(0, 3).join(' | ')}\n`;
         }
 
-        if (project.buildings?.length) {
+        const activeBuildings = (project.buildings || []).filter((building) => !building.deleted_at);
+        if (activeBuildings.length) {
             dataText += '   Buildings:\n';
-            for (const building of project.buildings) {
+            for (const building of activeBuildings) {
                 if (building.is_whole_property_listing) {
                     dataText = appendWholeBuildingListing(dataText, project, building);
                     continue;
                 }
 
-                dataText += `     - ${building.building_name} \n`;
-                if (building.building_type) dataText += `          Building Type:  ${building.building_type}\n`;
-                if (building.status) dataText += `          Status:  ${building.status}\n`;
-                if (building.number_of_units) dataText += `          Number of Units:  ${building.number_of_units}\n`;
-                if (building.total_available_units) {
-                    dataText += `          Total Available Units:  ${building.total_available_units}\n`;
+                dataText += `     - ${building.building_name || 'Building'}\n`;
+                const buildingFields = formatBuildingInventoryFields(building);
+                if (buildingFields.length) {
+                    dataText += `${buildingFields.join('\n')}\n`;
                 }
-                if (building.lts_completion_date) {
-                    dataText += `          LTS Completion Date:  ${building.lts_completion_date}\n`;
-                }
-                if (building.cts_completion_date) {
-                    dataText += `          CTS Completion Date:  ${building.cts_completion_date}\n`;
-                }
-                if (building.total_parking) dataText += `          Total Parking:  ${building.total_parking}\n`;
-                if (building.total_available_parking) {
-                    dataText += `          Total Available Parking:  ${building.total_available_parking}\n`;
-                }
-                if (building.freebies) dataText += `          Freebies:  ${building.freebies}\n`;
 
-                dataText += '          Available Units: \n';
-                if (building.units?.length) {
-                    for (const unit of building.units) {
+                const activeUnits = (building.units || []).filter((unit) => !unit.deleted_at);
+                dataText += '          Available Units:\n';
+                if (activeUnits.length) {
+                    for (const unit of activeUnits) {
                         const unitRef = getUnitRef(unit);
                         const unitPage = getPublicUnitUrl(project, unitRef);
-                        dataText += `             • ${unit.unit_type} -`;
-                        dataText += ` Unit Ref (internal, never mention to client): ${unitRef},`;
-                        if (unitPage) dataText += ` Unit Page: ${unitPage},`;
-                        dataText += ` Project: ${publicName},`;
-                        dataText += ` Building: ${building.building_name || 'N/A'},`;
-                        dataText += `${unit.unit_size ? ` Area: ${unit.unit_size},` : ''}`;
-                        dataText += `${unit.bedrooms != null ? ` Bedrooms: ${unit.bedrooms},` : ''}`;
-                        dataText += `${unit.bathrooms != null ? ` Bathrooms: ${unit.bathrooms},` : ''}`;
-                        dataText += `${unit.unit_price ? ` Price: ${unit.unit_price.toLocaleString()},` : ' Price: No price'}`;
+                        dataText += `             • ${unit.unit_type || 'Unit'}`;
+                        dataText += ` | Unit Ref (internal, never mention to client): ${unitRef}`;
+                        if (unitPage) dataText += ` | Unit Page: ${unitPage}`;
+                        dataText += ` | Property: ${publicName}`;
+                        dataText += ` | Building: ${building.building_name || 'N/A'}`;
+                        dataText += ` | ${formatUnitInventoryInline(unit)}`;
 
                         const unitMedia = formatMediaLinks({
                             imagesVideosLink: unit.images_videos_link,
+                            coverImageUrl: unit.cover_image_url,
                             assets: unit.assets || [],
                         });
                         if (unitMedia.length) {
-                            dataText += ` Unit media URLs: ${unitMedia.slice(0, 1).join(' | ')},`;
+                            dataText += ` | Unit media URLs: ${unitMedia.join(' | ')}`;
                         } else {
-                            dataText += ' Unit media URLs: none available,';
+                            dataText += ' | Unit media URLs: none available';
                         }
 
                         dataText += '\n';
                     }
+                } else {
+                    dataText += '             • (no active units)\n';
                 }
             }
         }
 
-        if (project.deliverables?.length) {
-            dataText += '   Deliverables:\n';
-            for (const d of project.deliverables) {
-                dataText += `     • ${d.name || 'Deliverable'} - ${d.description || ''}\n`;
+        const projectDeliverables = formatDeliverables(
+            (project.deliverables || []).filter((item) => !item.building_id && !item.unit_id),
+        );
+        if (projectDeliverables.length) {
+            dataText += '   Project Deliverables:\n';
+            for (const item of projectDeliverables) {
+                dataText += `     • ${item}\n`;
             }
         }
 
@@ -294,7 +401,8 @@ Unit reference rules:
 - When acknowledging unit interest, speak directly to the client: "You are interested in [unit label]..." — never say "You've mentioned your interest in", "You mentioned your interest in", "I see you're interested in", or similar meta phrasing.
 - When acknowledging unit interest only, stop after confirming the unit. Do not ask for contact details unless the client explicitly asks to be contacted, requests a callback, or asks for a site visit.
 - When confirming that the team will reach out, arrange a visit, or follow up after the client shares their name/contact, also invite them to call or email Mr. Boss Realty (use Company contact info phone/email when available). Example: "Someone from our team will reach out shortly. You may also call us or send us an email."
-- Answer follow-up questions about price, size, photos, payment terms, reservation, and availability in the context of the active unit focus unless they clearly switch to another unit or property.
+- Answer follow-up questions from ANY unit/property fields present in the active focus or snapshot (price, rent, size, floor, room number, payment terms, reservation, dues, pets, smoking, freebies, deliverables, completion dates, parking, amenities, media, maps, and more) unless the client clearly switches listing.
+- Pet policy is per unit (and per whole-property listing). When asked which units allow pets / are pet-friendly, use Pets Allowed and Allowed Pet Size from the snapshot. Do not invent a building-wide pet policy unless every unit shares the same value.
 - If the user asks about "this unit" or "that unit" and an active unit focus exists, use the active unit focus.
 - When sharing a unit link, use the exact Unit Page URL from the snapshot with friendly link text (example: [view unit details](url)). Do not put the Unit Ref in the link label or reply text.
 Media rules:
@@ -305,11 +413,12 @@ Media rules:
   ![Studio room 201](https://example.com/photo.jpg)
 - For PDFs, videos, and other files, include the exact URL on its own line.
 - Never use ChatGPT, OpenAI, oaiusercontent, ngrok, or placeholder links.
-Public listing visibility rules:
-- Prefer public website fields (city, price, bedrooms, bathrooms, unit/building type, status, amenities, hero image).
-- You may also answer from snapshot details such as payment terms, reservation, floor, room number, and address when the client asks.
+Inventory answering rules:
+- You may answer any inventory question using fields present in the snapshot or active focus. Be complete and specific.
+- If a requested detail is missing from the snapshot, say it is not available yet — never invent values.
 - When asked for Google Earth / Maps / map location, share the exact Google Earth and Google Maps URLs from the snapshot (or active focus). Prefer markdown links with friendly text (example: [Open in Google Earth](url)).
-- Do not invent missing details. Do not volunteer private owner contact details unless the client asks and the snapshot includes them.
+- Never reveal private owner/landlord identity or private owner contact numbers/emails. Use Mr. Boss Realty company contact instead when outreach is needed.
+- For private properties, keep using the public display name ("Private Property") and never expose owner identity.
 - Do NOT tell the client that OTP or privacy verification is required — the website handles that separately after a question limit.
 Developer context rules:
 - When Developer Website or Developer Notes appear in the snapshot or active focus block, treat them as internal notes that help the AI answer questions about that property.
