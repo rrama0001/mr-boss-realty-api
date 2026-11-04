@@ -14,6 +14,7 @@ const { pickProjectLogo } = require('../services/projectLogo');
 const { pickUnitImage } = require('../services/unitAssets');
 const { pickUnitDisplayPrice } = require('../services/unitListing');
 const { normalizeStoredUploadUrl } = require('../services/uploadUrls');
+const { cityToSlug } = require('../services/projectPublicUrl');
 
 const unitInclude = {
   projects: {
@@ -225,10 +226,382 @@ function formatPublicUnitDetail(unit) {
   };
 }
 
+const UNIT_TYPE_ORDER = [
+  'Studio',
+  'Standard Room',
+  '1 Bedroom',
+  '2 Bedroom',
+  '3 Bedroom',
+  'Loft',
+  'Penthouse',
+  'Hotel Room',
+  'Deluxe Room',
+  'Suite',
+  'Executive Suite',
+  'Presidential Suite',
+  'Retail Space',
+  'Office Space',
+  'Warehouse',
+  'Storage Unit',
+  'Showroom',
+  'Restaurant Space',
+  'Kiosk',
+  'Function Room',
+  'Conference Room',
+  'Meeting Room',
+  'Event Hall',
+  'Parking Slot',
+  'Motorcycle Parking',
+  'Storage Locker',
+];
+
+const unitListInclude = {
+  projects: {
+    select: {
+      id: true,
+      slug: true,
+      project_name: true,
+      city: true,
+      location: true,
+      developer: true,
+      status: true,
+      is_private_on_website: true,
+    },
+  },
+  buildings: {
+    select: {
+      building_name: true,
+      building_type: true,
+      status: true,
+      is_whole_property_listing: true,
+    },
+  },
+  assets: {
+    select: { image_link: true },
+  },
+};
+
+function parseQueryList(value) {
+  if (value == null || value === '') return [];
+  const source = Array.isArray(value) ? value : String(value).split('|');
+  return source.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function parseQueryNumbers(value) {
+  return parseQueryList(value)
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item));
+}
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function textMatchesSearch(haystack, query) {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return true;
+
+  const text = normalizeSearchText(haystack);
+  if (!text) return false;
+
+  return normalizedQuery.split(' ').filter(Boolean).every((token) => text.includes(token));
+}
+
+function listingSortTime(record) {
+  return new Date(record.updated_at || record.created_at || 0).getTime();
+}
+
+function buildListingSearchText(parts) {
+  return parts.filter(Boolean).join(' ');
+}
+
+async function loadListingIndex(listingTypeFilter) {
+  const unitWhere = {
+    buildings: { is_whole_property_listing: false },
+    ...(listingTypeFilter ? { listing_type: listingTypeFilter } : {}),
+  };
+  const buildingWhere = {
+    is_whole_property_listing: true,
+    ...(listingTypeFilter ? { listing_type: listingTypeFilter } : {}),
+  };
+
+  const [units, wholeBuildings] = await Promise.all([
+    prisma.units.findMany({
+      where: unitWhere,
+      select: {
+        id: true,
+        slug: true,
+        unit_type: true,
+        bedrooms: true,
+        bathrooms: true,
+        listing_type: true,
+        created_at: true,
+        updated_at: true,
+        projects: {
+          select: {
+            project_name: true,
+            city: true,
+            location: true,
+            developer: true,
+            slug: true,
+          },
+        },
+        buildings: {
+          select: { building_name: true, building_type: true },
+        },
+      },
+    }),
+    prisma.buildings.findMany({
+      where: buildingWhere,
+      select: {
+        id: true,
+        building_name: true,
+        building_type: true,
+        listing_type: true,
+        bedrooms: true,
+        bathrooms: true,
+        created_at: true,
+        updated_at: true,
+        projects: {
+          select: {
+            project_name: true,
+            city: true,
+            location: true,
+            developer: true,
+            slug: true,
+          },
+        },
+      },
+    }),
+  ]);
+
+  const unitItems = units.map((unit) => ({
+    kind: 'unit',
+    id: unit.id,
+    sortAt: listingSortTime(unit),
+    unit_type: unit.unit_type,
+    bedrooms: unit.bedrooms,
+    bathrooms: unit.bathrooms,
+    project_city: unit.projects?.city || '',
+    searchText: buildListingSearchText([
+      unit.unit_type,
+      unit.slug,
+      unit.listing_type,
+      unit.buildings?.building_name,
+      unit.buildings?.building_type,
+      unit.projects?.project_name,
+      unit.projects?.city,
+      unit.projects?.location,
+      unit.projects?.developer,
+      unit.projects?.slug,
+      unit.bedrooms != null ? `${unit.bedrooms} br` : '',
+      unit.bedrooms != null ? `${unit.bedrooms} bedroom` : '',
+      unit.bathrooms != null ? `${unit.bathrooms} ba` : '',
+      unit.bathrooms != null ? `${unit.bathrooms} bathroom` : '',
+    ]),
+  }));
+
+  const buildingItems = wholeBuildings.map((building) => ({
+    kind: 'whole_building',
+    id: building.id,
+    sortAt: listingSortTime(building),
+    unit_type: null,
+    bedrooms: building.bedrooms,
+    bathrooms: building.bathrooms,
+    project_city: building.projects?.city || '',
+    searchText: buildListingSearchText([
+      building.building_name,
+      building.building_type,
+      building.listing_type,
+      building.projects?.project_name,
+      building.projects?.city,
+      building.projects?.location,
+      building.projects?.developer,
+      building.projects?.slug,
+    ]),
+  }));
+
+  return [...unitItems, ...buildingItems].sort((a, b) => b.sortAt - a.sortAt);
+}
+
+function filterListingIndex(listing, query) {
+  const search = String(query.q || '').trim();
+  const cities = parseQueryList(query.cities);
+  const citySlug = String(query.city_slug || '').trim().toLowerCase();
+  const unitTypes = parseQueryList(query.unit_types);
+  const bedrooms = parseQueryNumbers(query.bedrooms);
+  const bathrooms = parseQueryNumbers(query.bathrooms);
+
+  return listing.filter((item) => {
+    const city = String(item.project_city || '').trim();
+    if (citySlug) {
+      if (cityToSlug(city) !== citySlug) return false;
+    } else if (cities.length && !cities.includes(city)) {
+      return false;
+    }
+
+    const isWholeBuilding = item.kind === 'whole_building';
+    if (!isWholeBuilding && unitTypes.length && !unitTypes.includes(item.unit_type)) {
+      return false;
+    }
+    if (!isWholeBuilding && bedrooms.length) {
+      if (item.bedrooms == null || !bedrooms.some((value) => Number(item.bedrooms) === value)) {
+        return false;
+      }
+    }
+    if (!isWholeBuilding && bathrooms.length) {
+      if (item.bathrooms == null || !bathrooms.some((value) => Number(item.bathrooms) === value)) {
+        return false;
+      }
+    }
+
+    return textMatchesSearch(item.searchText, search);
+  });
+}
+
+function buildListingFacets(listing) {
+  const cities = new Map();
+  const unitTypes = new Map();
+  const bedrooms = new Map();
+  const bathrooms = new Map();
+
+  listing.forEach((item) => {
+    const city = String(item.project_city || '').trim();
+    if (city) cities.set(city, (cities.get(city) || 0) + 1);
+
+    if (item.kind === 'whole_building') return;
+
+    if (item.unit_type) unitTypes.set(item.unit_type, (unitTypes.get(item.unit_type) || 0) + 1);
+    if (item.bedrooms != null) bedrooms.set(item.bedrooms, (bedrooms.get(item.bedrooms) || 0) + 1);
+    if (item.bathrooms != null) bathrooms.set(item.bathrooms, (bathrooms.get(item.bathrooms) || 0) + 1);
+  });
+
+  const typeOrder = new Map(UNIT_TYPE_ORDER.map((name, index) => [name, index]));
+
+  return {
+    cities: [...cities.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([name, count]) => ({ name, count })),
+    unit_types: [...unitTypes.entries()]
+      .sort((a, b) => {
+        const aIndex = typeOrder.has(a[0]) ? typeOrder.get(a[0]) : Number.MAX_SAFE_INTEGER;
+        const bIndex = typeOrder.has(b[0]) ? typeOrder.get(b[0]) : Number.MAX_SAFE_INTEGER;
+        if (aIndex !== bIndex) return aIndex - bIndex;
+        return a[0].localeCompare(b[0]);
+      })
+      .map(([name, count]) => ({ name, count })),
+    bedrooms: [...bedrooms.entries()]
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .map(([value, count]) => ({ value: Number(value), count })),
+    bathrooms: [...bathrooms.entries()]
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .map(([value, count]) => ({ value: Number(value), count })),
+  };
+}
+
+async function hydrateListingPage(pageItems) {
+  const unitIds = pageItems.filter((item) => item.kind === 'unit').map((item) => item.id);
+  const buildingIds = pageItems.filter((item) => item.kind === 'whole_building').map((item) => item.id);
+
+  const [units, wholeBuildings] = await Promise.all([
+    unitIds.length
+      ? prisma.units.findMany({ where: { id: { in: unitIds } }, include: unitListInclude })
+      : [],
+    buildingIds.length
+      ? prisma.buildings.findMany({
+        where: { id: { in: buildingIds } },
+        include: { projects: { select: wholeBuildingProjectSelect } },
+      })
+      : [],
+  ]);
+
+  const unitsById = new Map(units.map((unit) => [
+    unit.id,
+    sanitizePublicUnitListItem(formatPublicUnitListItem(unit)),
+  ]));
+  const buildingsById = new Map(wholeBuildings.map((building) => [
+    building.id,
+    sanitizePublicWholeBuilding(
+      building.projects || {},
+      formatPublicWholeBuildingListItem(building),
+    ),
+  ]));
+
+  return pageItems
+    .map((item) => (item.kind === 'unit' ? unitsById.get(item.id) : buildingsById.get(item.id)))
+    .filter(Boolean);
+}
+
+async function loadFormattedPublicListing(listingTypeFilter) {
+  const units = await prisma.units.findMany({
+    where: {
+      buildings: { is_whole_property_listing: false },
+      ...(listingTypeFilter ? { listing_type: listingTypeFilter } : {}),
+    },
+    orderBy: { created_at: 'desc' },
+    include: unitListInclude,
+  });
+
+  const wholeBuildings = await prisma.buildings.findMany({
+    where: {
+      is_whole_property_listing: true,
+      ...(listingTypeFilter ? { listing_type: listingTypeFilter } : {}),
+    },
+    orderBy: { updated_at: 'desc' },
+    include: { projects: { select: wholeBuildingProjectSelect } },
+  });
+
+  const unitItems = units.map((unit) => sanitizePublicUnitListItem(formatPublicUnitListItem(unit)));
+  const wholeBuildingItems = wholeBuildings.map((building) => sanitizePublicWholeBuilding(
+    building.projects || {},
+    formatPublicWholeBuildingListItem(building),
+  ));
+
+  return [...unitItems, ...wholeBuildingItems].sort((a, b) => {
+    const aTime = new Date(a.updated_at || a.created_at || 0).getTime();
+    const bTime = new Date(b.updated_at || b.created_at || 0).getTime();
+    return bTime - aTime;
+  });
+}
+
 exports.getPublicListing = async (req, res) => {
   try {
     const limitParam = req.query.limit;
     const listingTypeFilter = String(req.query.listing_type || '').trim().toLowerCase();
+    const paginate = req.query.page != null && req.query.page !== '';
+
+    if (paginate) {
+      const perPageRaw = parseInt(req.query.per_page, 10);
+      const perPage = Number.isNaN(perPageRaw) ? 15 : Math.min(Math.max(perPageRaw, 1), 100);
+      const requestedPage = Math.max(parseInt(req.query.page, 10) || 1, 1);
+      const index = await loadListingIndex(listingTypeFilter);
+      const facets = buildListingFacets(index);
+      const filtered = filterListingIndex(index, req.query);
+      const total = filtered.length;
+      const lastPage = Math.max(1, Math.ceil(total / perPage) || 1);
+      const currentPage = Math.min(requestedPage, lastPage);
+      const start = (currentPage - 1) * perPage;
+      const data = await hydrateListingPage(filtered.slice(start, start + perPage));
+
+      return res.json({
+        data,
+        meta: {
+          total,
+          unfiltered_total: index.length,
+          per_page: perPage,
+          current_page: currentPage,
+          last_page: lastPage,
+          facets,
+        },
+      });
+    }
+
     let take;
 
     if (limitParam === 'all') {
@@ -238,75 +611,7 @@ exports.getPublicListing = async (req, res) => {
       take = Number.isNaN(parsedLimit) ? 6 : Math.min(Math.max(parsedLimit, 1), 500);
     }
 
-    const units = await prisma.units.findMany({
-      orderBy: { created_at: 'desc' },
-      include: {
-        projects: {
-          select: {
-            id: true,
-            slug: true,
-            project_name: true,
-            city: true,
-            location: true,
-            developer: true,
-            status: true,
-            is_private_on_website: true,
-          },
-        },
-        buildings: {
-          select: {
-            building_name: true,
-            building_type: true,
-            status: true,
-            is_whole_property_listing: true,
-          },
-        },
-        assets: {
-          select: { image_link: true },
-        },
-      },
-      where: {
-        buildings: {
-          is_whole_property_listing: false,
-        },
-      },
-    });
-
-    const wholeBuildings = await prisma.buildings.findMany({
-      where: {
-        is_whole_property_listing: true,
-        ...(listingTypeFilter ? { listing_type: listingTypeFilter } : {}),
-      },
-      orderBy: { updated_at: 'desc' },
-      include: {
-        projects: {
-          select: wholeBuildingProjectSelect,
-        },
-      },
-    });
-
-    const unitItems = units
-      .filter((unit) => {
-        if (!listingTypeFilter) return true;
-        const type = unit.listing_type || 'sale';
-        return type === listingTypeFilter;
-      })
-      .map((unit) => sanitizePublicUnitListItem(formatPublicUnitListItem(unit)));
-
-    const wholeBuildingItems = wholeBuildings.map((building) =>
-      sanitizePublicWholeBuilding(
-        building.projects || {},
-        formatPublicWholeBuildingListItem(building),
-      ),
-    );
-
-    const listing = [...unitItems, ...wholeBuildingItems]
-      .sort((a, b) => {
-        const aTime = a.updated_at || a.created_at || 0;
-        const bTime = b.updated_at || b.created_at || 0;
-        return new Date(bTime) - new Date(aTime);
-      });
-
+    const listing = await loadFormattedPublicListing(listingTypeFilter);
     const limitedListing = take != null ? listing.slice(0, take) : listing;
 
     res.json(limitedListing);
