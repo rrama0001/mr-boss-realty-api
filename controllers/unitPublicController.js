@@ -321,15 +321,31 @@ function buildListingSearchText(parts) {
   return parts.filter(Boolean).join(' ');
 }
 
-async function loadListingIndex(listingTypeFilter) {
-  const unitWhere = {
-    buildings: { is_whole_property_listing: false },
+function publicListingUnitWhere(listingTypeFilter) {
+  return {
+    // Soft-delete does not filter to-one project relations, so exclude units
+    // whose parent project was deleted (AI inventory already skips those).
+    projects: { deleted_at: null },
+    buildings: {
+      is_whole_property_listing: false,
+      deleted_at: null,
+    },
     ...(listingTypeFilter ? { listing_type: listingTypeFilter } : {}),
   };
-  const buildingWhere = {
+}
+
+function publicListingWholeBuildingWhere(listingTypeFilter) {
+  return {
     is_whole_property_listing: true,
+    deleted_at: null,
+    projects: { deleted_at: null },
     ...(listingTypeFilter ? { listing_type: listingTypeFilter } : {}),
   };
+}
+
+async function loadListingIndex(listingTypeFilter) {
+  const unitWhere = publicListingUnitWhere(listingTypeFilter);
+  const buildingWhere = publicListingWholeBuildingWhere(listingTypeFilter);
 
   const [units, wholeBuildings] = await Promise.all([
     prisma.units.findMany({
@@ -540,19 +556,13 @@ async function hydrateListingPage(pageItems) {
 
 async function loadFormattedPublicListing(listingTypeFilter) {
   const units = await prisma.units.findMany({
-    where: {
-      buildings: { is_whole_property_listing: false },
-      ...(listingTypeFilter ? { listing_type: listingTypeFilter } : {}),
-    },
+    where: publicListingUnitWhere(listingTypeFilter),
     orderBy: { created_at: 'desc' },
     include: unitListInclude,
   });
 
   const wholeBuildings = await prisma.buildings.findMany({
-    where: {
-      is_whole_property_listing: true,
-      ...(listingTypeFilter ? { listing_type: listingTypeFilter } : {}),
-    },
+    where: publicListingWholeBuildingWhere(listingTypeFilter),
     orderBy: { updated_at: 'desc' },
     include: { projects: { select: wholeBuildingProjectSelect } },
   });
