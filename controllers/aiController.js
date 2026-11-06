@@ -4,6 +4,7 @@ const {
     buildPropertySnapshot,
     buildSystemContent,
     isInventoryComparisonQuestion,
+    shouldIgnoreListingFocus,
     resolveInventoryComparisonGroundTruth,
     formatComparisonGroundTruth,
 } = require('../services/aiPropertySnapshot');
@@ -210,12 +211,13 @@ exports.getReply = async (req, res) => {
         });
         const clientPreferences = setClientPreferences(userKey, preferenceUpdate.preferences);
 
-        const comparisonQuestion = isInventoryComparisonQuestion(message);
+        const comparisonQuestion = isInventoryComparisonQuestion(message, projects);
+        const ignoreListingFocus = shouldIgnoreListingFocus(message, projects);
         const comparisonTruth = comparisonQuestion
             ? resolveInventoryComparisonGroundTruth(projects, message, clientPreferences)
             : null;
         const previousBuildingFocus = conversationBuildingFocus.get(userKey) || null;
-        const buildingFocus = comparisonQuestion
+        const buildingFocus = (comparisonQuestion || ignoreListingFocus)
             ? null
             : resolveConversationBuildingFocus(projects, message, previousBuildingFocus);
 
@@ -225,7 +227,7 @@ exports.getReply = async (req, res) => {
         }
 
         let unitFocus = null;
-        if (!comparisonQuestion && !buildingFocus) {
+        if (!comparisonQuestion && !ignoreListingFocus && !buildingFocus) {
             const previousUnitFocus = conversationUnitFocus.get(userKey) || null;
             unitFocus = resolveConversationUnitFocus(projects, message, previousUnitFocus);
 
@@ -235,7 +237,7 @@ exports.getReply = async (req, res) => {
         }
 
         const activeFocus = buildingFocus || unitFocus;
-        if (!comparisonQuestion) {
+        if (!comparisonQuestion && !ignoreListingFocus) {
             rememberListingFocus(userKey, message, buildingFocus, unitFocus, pageUrl);
         }
 
@@ -420,12 +422,13 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
     const globalRedactNames = collectPrivateRedactionTermsFromProjects(projects);
     const clientPreferences = getClientPreferences(userKey);
 
-    const comparisonQuestion = isInventoryComparisonQuestion(message);
+    const comparisonQuestion = isInventoryComparisonQuestion(message, projects);
+    const ignoreListingFocus = shouldIgnoreListingFocus(message, projects);
     const comparisonTruth = comparisonQuestion
         ? resolveInventoryComparisonGroundTruth(projects, message, clientPreferences)
         : null;
     const previousBuildingFocus = conversationBuildingFocus.get(userKey) || null;
-    const buildingFocus = comparisonQuestion
+    const buildingFocus = (comparisonQuestion || ignoreListingFocus)
         ? null
         : resolveConversationBuildingFocus(projects, message, previousBuildingFocus);
 
@@ -435,7 +438,7 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
     }
 
     let unitFocus = null;
-    if (!comparisonQuestion && !buildingFocus) {
+    if (!comparisonQuestion && !ignoreListingFocus && !buildingFocus) {
         const previousUnitFocus = conversationUnitFocus.get(userKey) || null;
         unitFocus = resolveConversationUnitFocus(projects, message, previousUnitFocus);
 
@@ -445,7 +448,7 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
     }
 
     const activeFocus = buildingFocus || unitFocus;
-    if (!comparisonQuestion) {
+    if (!comparisonQuestion && !ignoreListingFocus) {
         rememberListingFocus(userKey, message, buildingFocus, unitFocus, pageUrl);
     }
 

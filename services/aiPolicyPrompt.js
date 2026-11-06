@@ -29,7 +29,7 @@ OTP verification rules (website chat only):
 - After the visitor is verified, continue helping normally.
 
 Developer context rules:
-- Developer Notes in the database snapshot are internal notes for the AI (sample computations, payment examples, useful links). Use them when relevant to the active property focus.
+- Developer Notes in the database snapshot are internal notes for the AI (sample computations, payment examples, useful links). Use them when relevant to the property being discussed.
 - You may share the Developer Website URL from the snapshot; do not claim you browsed it live.
 `.trim();
 

@@ -127,7 +127,7 @@ function extractPreferencesFromMessage(message, { cities = [], previous = {} } =
       changed = true;
     }
   } else {
-    const bedroomMatch = text.match(/\b(\d+)\s*(?:br|bed(?:room)?s?)\b/i);
+    const bedroomMatch = text.match(/\b(\d+)\s*[- ]?(?:br|bed(?:room)?s?)\b/i);
     if (bedroomMatch) {
       const bedrooms = Number(bedroomMatch[1]);
       if (Number.isFinite(bedrooms) && next.bedrooms !== bedrooms) {

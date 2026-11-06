@@ -29,10 +29,11 @@ async function handleIncomingMessage(event) {
                 { recipient: { id: senderId }, sender_action: 'typing_on' }
             );
 
-            // Step 2: Call AI reply endpoint
+            // Step 2: Call AI reply endpoint (senderId keeps each Messenger user isolated)
             const aiResponse = await axios.post(`${API_URL}/ai/reply`, {
                 message: userMessage,
                 source: 'messenger',
+                senderId: `messenger-${senderId}`,
             });
 
             const replyText = aiResponse.data.reply || "I'm here, how can I help you?";
