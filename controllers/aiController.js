@@ -1,8 +1,9 @@
 const OpenAI = require('openai');
-const { PrismaClient } = require('@prisma/client');
+const { prisma } = require('../prisma/prismaClient');
 const {
     buildPropertySnapshot,
     buildSystemContent,
+    isInventoryComparisonQuestion,
 } = require('../services/aiPropertySnapshot');
 const {
     resolveConversationBuildingFocus,
@@ -34,7 +35,6 @@ const {
     setListingFocus,
 } = require('../services/aiConversationState');
 
-const prisma = new PrismaClient();
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
@@ -185,8 +185,11 @@ exports.getReply = async (req, res) => {
         const userKey = senderId || source || 'test-user';
         const globalRedactNames = collectPrivateRedactionTermsFromProjects(projects);
 
+        const comparisonQuestion = isInventoryComparisonQuestion(message);
         const previousBuildingFocus = conversationBuildingFocus.get(userKey) || null;
-        const buildingFocus = resolveConversationBuildingFocus(projects, message, previousBuildingFocus);
+        const buildingFocus = comparisonQuestion
+            ? null
+            : resolveConversationBuildingFocus(projects, message, previousBuildingFocus);
 
         if (buildingFocus) {
             conversationBuildingFocus.set(userKey, { buildingRef: buildingFocus.buildingRef });
@@ -194,7 +197,7 @@ exports.getReply = async (req, res) => {
         }
 
         let unitFocus = null;
-        if (!buildingFocus) {
+        if (!comparisonQuestion && !buildingFocus) {
             const previousUnitFocus = conversationUnitFocus.get(userKey) || null;
             unitFocus = resolveConversationUnitFocus(projects, message, previousUnitFocus);
 
@@ -204,7 +207,9 @@ exports.getReply = async (req, res) => {
         }
 
         const activeFocus = buildingFocus || unitFocus;
-        rememberListingFocus(userKey, message, buildingFocus, unitFocus, pageUrl);
+        if (!comparisonQuestion) {
+            rememberListingFocus(userKey, message, buildingFocus, unitFocus, pageUrl);
+        }
 
         const systemContent = buildSystemContent(aiPrompt, dataText, {
             buildingSummary: buildingFocus?.summary || '',
@@ -359,8 +364,11 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
     const dataText = buildPropertySnapshot(projects);
     const globalRedactNames = collectPrivateRedactionTermsFromProjects(projects);
 
+    const comparisonQuestion = isInventoryComparisonQuestion(message);
     const previousBuildingFocus = conversationBuildingFocus.get(userKey) || null;
-    const buildingFocus = resolveConversationBuildingFocus(projects, message, previousBuildingFocus);
+    const buildingFocus = comparisonQuestion
+        ? null
+        : resolveConversationBuildingFocus(projects, message, previousBuildingFocus);
 
     if (buildingFocus) {
         conversationBuildingFocus.set(userKey, { buildingRef: buildingFocus.buildingRef });
@@ -368,7 +376,7 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
     }
 
     let unitFocus = null;
-    if (!buildingFocus) {
+    if (!comparisonQuestion && !buildingFocus) {
         const previousUnitFocus = conversationUnitFocus.get(userKey) || null;
         unitFocus = resolveConversationUnitFocus(projects, message, previousUnitFocus);
 
@@ -378,7 +386,9 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
     }
 
     const activeFocus = buildingFocus || unitFocus;
-    rememberListingFocus(userKey, message, buildingFocus, unitFocus, pageUrl);
+    if (!comparisonQuestion) {
+        rememberListingFocus(userKey, message, buildingFocus, unitFocus, pageUrl);
+    }
 
     const systemContent = buildSystemContent(aiPrompt, dataText, {
         buildingSummary: buildingFocus?.summary || '',

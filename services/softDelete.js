@@ -18,20 +18,58 @@ const TO_MANY_SOFT_DELETE_RELATIONS = {
   units: new Set(),
 };
 
+// Soft-delete does not filter to-one parents automatically. Hide inventory whose
+// project/building was deleted even if the child row was left active.
+const ACTIVE_PARENT_WHERE = {
+  units: {
+    projects: { deleted_at: null },
+    buildings: { deleted_at: null },
+  },
+  buildings: {
+    projects: { deleted_at: null },
+  },
+};
+
 function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj || {}, key);
 }
 
-function withNotDeletedWhere(where = {}) {
-  if (hasOwn(where, 'deleted_at')) {
-    return where;
+function mergeActiveParentWhere(where = {}, model) {
+  const parents = ACTIVE_PARENT_WHERE[model];
+  if (!parents) return where;
+
+  const next = { ...where };
+
+  for (const [relation, filter] of Object.entries(parents)) {
+    if (!hasOwn(next, relation)) {
+      next[relation] = { ...filter };
+      continue;
+    }
+
+    const current = next[relation];
+    if (!current || typeof current !== 'object' || Array.isArray(current)) {
+      continue;
+    }
+
+    // Keep intentional deleted_at overrides (e.g. admin orphan audits).
+    if (hasOwn(current, 'deleted_at')) {
+      continue;
+    }
+
+    next[relation] = { ...current, ...filter };
   }
-  return { ...where, deleted_at: null };
+
+  return next;
+}
+
+function withNotDeletedWhere(where = {}, model) {
+  const base = hasOwn(where, 'deleted_at') ? { ...where } : { ...where, deleted_at: null };
+  return mergeActiveParentWhere(base, model);
 }
 
 function applyRelationSoftDelete(relationArgs, relationModel) {
   if (relationArgs === true) {
-    return { where: { deleted_at: null } };
+    return { where: withNotDeletedWhere({}, relationModel) };
   }
 
   if (!relationArgs || typeof relationArgs !== 'object') {
@@ -39,7 +77,7 @@ function applyRelationSoftDelete(relationArgs, relationModel) {
   }
 
   const next = { ...relationArgs };
-  next.where = withNotDeletedWhere(next.where || {});
+  next.where = withNotDeletedWhere(next.where || {}, relationModel);
 
   if (next.include) {
     next.include = mapSoftDeleteRelations(next.include, relationModel);
@@ -90,7 +128,7 @@ function applySoftDeleteReadArgs(args = {}, model) {
   delete next.includeDeleted;
 
   if (!includeDeleted) {
-    next.where = withNotDeletedWhere(next.where || {});
+    next.where = withNotDeletedWhere(next.where || {}, model);
 
     if (next.include) {
       next.include = mapSoftDeleteRelations(next.include, model);
@@ -464,6 +502,59 @@ async function restoreProject(prisma, projectId) {
   return { ok: true, record: restored };
 }
 
+/**
+ * Soft-delete child rows left active under deleted parents (legacy / partial deletes).
+ * Safe to run repeatedly.
+ */
+async function repairSoftDeleteOrphans(prisma, deletedAt = new Date()) {
+  const orphanBuildings = await prisma.$queryRaw`
+    SELECT b.id, b.slug
+    FROM buildings b
+    JOIN projects p ON p.id = b.project_id
+    WHERE b.deleted_at IS NULL AND p.deleted_at IS NOT NULL
+  `;
+
+  const orphanUnits = await prisma.$queryRaw`
+    SELECT u.id, u.slug
+    FROM units u
+    JOIN projects p ON p.id = u.project_id
+    JOIN buildings b ON b.id = u.building_id
+    WHERE u.deleted_at IS NULL
+      AND (p.deleted_at IS NOT NULL OR b.deleted_at IS NOT NULL)
+  `;
+
+  const updates = [];
+
+  for (const building of orphanBuildings) {
+    updates.push(prisma.buildings.update({
+      where: { id: building.id },
+      data: {
+        deleted_at: deletedAt,
+        slug: deletedSlug(building.slug || `building-${building.id}`, building.id),
+      },
+    }));
+  }
+
+  for (const unit of orphanUnits) {
+    updates.push(prisma.units.update({
+      where: { id: unit.id },
+      data: {
+        deleted_at: deletedAt,
+        slug: deletedSlug(unit.slug || `unit-${unit.id}`, unit.id),
+      },
+    }));
+  }
+
+  if (updates.length) {
+    await prisma.$transaction(updates);
+  }
+
+  return {
+    buildings: orphanBuildings.map((row) => row.id),
+    units: orphanUnits.map((row) => row.id),
+  };
+}
+
 module.exports = {
   SOFT_DELETE_MODELS,
   createSoftDeleteExtension,
@@ -473,4 +564,5 @@ module.exports = {
   restoreUnit,
   restoreBuilding,
   restoreProject,
+  repairSoftDeleteOrphans,
 };

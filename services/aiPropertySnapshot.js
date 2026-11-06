@@ -246,6 +246,92 @@ function buildMediaIndex(projects) {
     return `Shareable unit/project media index:\n${entries.map((entry) => `- ${entry}`).join('\n')}\n`;
 }
 
+function isStudioUnitType(unitType) {
+    return /\bstudio\b/i.test(String(unitType || ''));
+}
+
+function collectComparableUnits(projects) {
+    const entries = [];
+
+    for (const project of projects || []) {
+        const publicName = getPublicProjectDisplayName(project);
+        const buildings = (project.buildings || []).filter((building) => !building.deleted_at);
+
+        for (const building of buildings) {
+            if (building.is_whole_property_listing) continue;
+
+            const units = (building.units || []).filter((unit) => !unit.deleted_at);
+            for (const unit of units) {
+                entries.push({
+                    projectName: publicName,
+                    buildingName: building.building_name || 'Building',
+                    unitType: unit.unit_type || 'Unit',
+                    roomNumber: unit.room_number || null,
+                    listingType: String(unit.listing_type || 'sale').toLowerCase(),
+                    salePrice: Number(unit.unit_price),
+                    monthlyRent: Number(unit.monthly_rent),
+                    unitRef: getUnitRef(unit),
+                    unitPage: getPublicUnitUrl(project, getUnitRef(unit)),
+                    isStudio: isStudioUnitType(unit.unit_type),
+                });
+            }
+        }
+    }
+
+    return entries;
+}
+
+function formatRankedUnitLine(entry, priceLabel, priceValue) {
+    const room = entry.roomNumber ? `Room ${entry.roomNumber}` : 'Room n/a';
+    const page = entry.unitPage ? ` | Unit Page: ${entry.unitPage}` : '';
+    return `- ${entry.unitType} | ${room} | ${entry.buildingName} | ${entry.projectName} | ${priceLabel}: ${formatMoney(priceValue)} | Unit Ref (internal): ${entry.unitRef}${page}`;
+}
+
+function buildPriceComparisonIndex(projects, { limit = 8 } = {}) {
+    const units = collectComparableUnits(projects);
+    const saleStudios = units
+        .filter((entry) => entry.isStudio && entry.listingType === 'sale' && Number.isFinite(entry.salePrice) && entry.salePrice > 0)
+        .sort((a, b) => b.salePrice - a.salePrice)
+        .slice(0, limit);
+    const saleUnits = units
+        .filter((entry) => entry.listingType === 'sale' && Number.isFinite(entry.salePrice) && entry.salePrice > 0)
+        .sort((a, b) => b.salePrice - a.salePrice)
+        .slice(0, limit);
+    const rentStudios = units
+        .filter((entry) => entry.isStudio && entry.listingType === 'rent' && Number.isFinite(entry.monthlyRent) && entry.monthlyRent > 0)
+        .sort((a, b) => b.monthlyRent - a.monthlyRent)
+        .slice(0, limit);
+
+    const lines = [
+        'Price comparison index (pre-ranked from the database — prefer this for most/least expensive questions):',
+        'Studio sale units by Sale Price (highest first):',
+        ...(saleStudios.length
+            ? saleStudios.map((entry) => formatRankedUnitLine(entry, 'Sale Price', entry.salePrice))
+            : ['- (none)']),
+        'All sale units by Sale Price (highest first):',
+        ...(saleUnits.length
+            ? saleUnits.map((entry) => formatRankedUnitLine(entry, 'Sale Price', entry.salePrice))
+            : ['- (none)']),
+        'Studio rent units by Monthly Rent (highest first):',
+        ...(rentStudios.length
+            ? rentStudios.map((entry) => formatRankedUnitLine(entry, 'Monthly Rent', entry.monthlyRent))
+            : ['- (none)']),
+        'Notes: Unit types containing "Studio" (including "SOHO - Studio") count as studio units. Active conversation focus must NOT override this ranking for comparison questions.',
+    ];
+
+    return `${lines.join('\n')}\n`;
+}
+
+function isInventoryComparisonQuestion(message) {
+    const text = String(message || '').trim();
+    if (!text) return false;
+
+    return (
+        /\b(most|least|highest|lowest|cheapest|priciest|expensive)\b/i.test(text)
+        && /\b(price|priced|expensive|cheap|cost|studio|unit|bedroom|br|rent|sale)\b/i.test(text)
+    );
+}
+
 function buildPropertySnapshot(projects) {
     let dataText = 'Mr. Boss Realty Property Database Snapshot:\n\n';
 
@@ -352,6 +438,7 @@ function buildPropertySnapshot(projects) {
         dataText += '\n';
     }
 
+    dataText += `\n${buildPriceComparisonIndex(projects)}`;
     dataText += `\n${buildMediaIndex(projects)}`;
 
     return dataText;
@@ -416,6 +503,9 @@ Media rules:
 Inventory answering rules:
 - You may answer any inventory question using fields present in the snapshot or active focus. Be complete and specific.
 - If a requested detail is missing from the snapshot, say it is not available yet — never invent values.
+- For most/least expensive, cheapest, highest/lowest priced, or similar ranking questions: compare ALL matching units using the Price comparison index first. Do NOT answer from Active unit focus alone.
+- Treat "SOHO - Studio" and any unit type containing "Studio" as studio units when the client asks about studios.
+- Name the winning unit with property, building, room, unit type, and exact Sale Price or rent from the index.
 - When asked for Google Earth / Maps / map location, share the exact Google Earth and Google Maps URLs from the snapshot (or active focus). Prefer markdown links with friendly text (example: [Open in Google Earth](url)).
 - Never reveal private owner/landlord identity or private owner contact numbers/emails. Use Mr. Boss Realty company contact instead when outreach is needed.
 - For private properties, keep using the public display name ("Private Property") and never expose owner identity.
@@ -435,5 +525,7 @@ module.exports = {
     isShareableMediaUrl,
     buildPropertySnapshot,
     buildSystemContent,
+    buildPriceComparisonIndex,
+    isInventoryComparisonQuestion,
     formatDeveloperAiLines,
 };
