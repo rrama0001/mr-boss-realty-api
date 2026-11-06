@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const bcrypt = require('bcryptjs');
 const { PrismaClient } = require('@prisma/client');
 const { seedUnitTypes } = require('../services/unitTypes');
 const { seedBuildingTypes } = require('../services/buildingTypes');
@@ -76,10 +77,13 @@ async function main() {
   if (!existingAdmin) {
     await prisma.users.create({
       data: {
-        username: 'Gerald Laput',
+        full_name: 'Gerald Laput',
         email: 'geraldlaput_mrbossrealty@gmail.com',
-        password: 'GL_mrbossRealty@2025',
+        password: await bcrypt.hash('GL_mrbossRealty@2025', 10),
         role: 'admin',
+        notify_email: false,
+        notify_sms: false,
+        notify_facebook: false,
       },
     });
   }

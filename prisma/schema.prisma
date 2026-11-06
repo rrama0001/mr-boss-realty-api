@@ -9,17 +9,26 @@ datasource db {
 }
 
 model users {
-  id             Int      @id @default(autoincrement())
-  username       String
-  email          String   @unique
-  password       String?
-  role           String   @default("user")
-  can_login      Boolean  @default(true)
-  created_at     DateTime @default(now())
-  email_verified Boolean  @default(false)
-  provider       String?
-  provider_id    String?
-  updated_at     DateTime @updatedAt
+  id                        Int       @id @default(autoincrement())
+  full_name                 String
+  email                     String    @unique
+  /// bcrypt hash only — never store plaintext passwords
+  password                  String?
+  phone                     String?
+  facebook_psid             String?
+  role                      String    @default("agent")
+  can_login                 Boolean   @default(true)
+  email_verified            Boolean   @default(false)
+  notify_email              Boolean   @default(false)
+  notify_sms                Boolean   @default(false)
+  notify_facebook           Boolean   @default(false)
+  /// sha256 of one-time reset token; cleared after use or expiry
+  password_reset_token_hash String?
+  password_reset_expires_at DateTime?
+  provider                  String?
+  provider_id               String?
+  created_at                DateTime  @default(now())
+  updated_at                DateTime  @updatedAt
 }
 
 model assets {
@@ -243,6 +252,10 @@ model website_settings {
   chat_idle_ttl_hours            Int?
   /// NULL = no DB purge. Positive = delete ai_chat_sessions older than this many days.
   chat_session_retention_days    Int?     @default(60)
+  /// Outbound From display name (e.g. Mr. Boss Realty). Used with mail_from_email.
+  mail_from_name                 String?
+  /// Outbound From email on a verified domain (e.g. noreply@mrbossrealty.com).
+  mail_from_email                String?
   created_at                     DateTime @default(now())
   updated_at                     DateTime @updatedAt
 }

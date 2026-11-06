@@ -46,7 +46,7 @@ router.put("/user/:id/access", checkAccess, isAdmin, async (req, res) => {
     });
 
     res.status(200).json({
-      message: `User ${updatedUser.username}'s access updated successfully`,
+      message: `User ${updatedUser.full_name}'s access updated successfully`,
       updatedUser,
     });
   } catch (error) {

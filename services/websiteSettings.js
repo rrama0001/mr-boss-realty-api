@@ -3,7 +3,11 @@ const DEFAULT_WEBSITE_SETTINGS = {
   otp_trigger_question_count: null,
   chat_idle_ttl_hours: null,
   chat_session_retention_days: 60,
+  mail_from_name: null,
+  mail_from_email: null,
 };
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const MIN_PROPERTY_PAGE_SIZE = 1;
 const MAX_PROPERTY_PAGE_SIZE = 100;
@@ -89,6 +93,36 @@ function parseChatSessionRetentionDays(value) {
   return parsed;
 }
 
+function parseOptionalText(value, { maxLength = 200 } = {}) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const text = String(value).trim();
+  if (!text) return null;
+  if (text.length > maxLength) return undefined;
+  return text;
+}
+
+function parseMailFromEmail(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const email = String(value).trim().toLowerCase();
+  if (!email) return null;
+  if (!EMAIL_PATTERN.test(email) || email.length > 254) {
+    return undefined;
+  }
+  return email;
+}
+
+function formatMailFromAddress(name, email) {
+  const fromEmail = String(email || '').trim();
+  if (!fromEmail) return null;
+  const fromName = String(name || '').trim();
+  if (!fromName) return fromEmail;
+  return `${fromName} <${fromEmail}>`;
+}
+
 function sanitizeWebsiteSettingsInput(body = {}) {
   const pageSize = parsePropertyPageSize(body.property_page_records_per_page);
   if (pageSize === null) {
@@ -126,11 +160,33 @@ function sanitizeWebsiteSettingsInput(body = {}) {
     throw error;
   }
 
+  const mailFromName = parseOptionalText(body.mail_from_name, { maxLength: 120 });
+  if (mailFromName === undefined) {
+    const error = new Error('Mail from name must be 120 characters or fewer.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const mailFromEmail = parseMailFromEmail(body.mail_from_email);
+  if (mailFromEmail === undefined) {
+    const error = new Error('Mail from email must be a valid email address.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (mailFromName && !mailFromEmail) {
+    const error = new Error('Mail from email is required when a from name is set.');
+    error.statusCode = 400;
+    throw error;
+  }
+
   return {
     property_page_records_per_page: pageSize,
     otp_trigger_question_count: otpTrigger,
     chat_idle_ttl_hours: chatIdleTtl,
     chat_session_retention_days: chatRetention,
+    mail_from_name: mailFromName,
+    mail_from_email: mailFromEmail,
   };
 }
 
@@ -139,6 +195,8 @@ function toPublicWebsiteSettings(row = null) {
   const otpTrigger = parseOtpTriggerQuestionCount(row?.otp_trigger_question_count);
   const chatIdleTtl = parseChatIdleTtlHours(row?.chat_idle_ttl_hours);
   const chatRetention = parseChatSessionRetentionDays(row?.chat_session_retention_days);
+  const mailFromName = parseOptionalText(row?.mail_from_name, { maxLength: 120 });
+  const mailFromEmail = parseMailFromEmail(row?.mail_from_email);
 
   return {
     property_page_records_per_page:
@@ -152,6 +210,12 @@ function toPublicWebsiteSettings(row = null) {
     chat_session_retention_days: chatRetention === undefined
       ? DEFAULT_WEBSITE_SETTINGS.chat_session_retention_days
       : chatRetention,
+    mail_from_name: mailFromName === undefined
+      ? DEFAULT_WEBSITE_SETTINGS.mail_from_name
+      : mailFromName,
+    mail_from_email: mailFromEmail === undefined
+      ? DEFAULT_WEBSITE_SETTINGS.mail_from_email
+      : mailFromEmail,
     updated_at: row?.updated_at || null,
   };
 }
@@ -167,6 +231,8 @@ async function getOrCreateWebsiteSettings(prisma) {
       otp_trigger_question_count: DEFAULT_WEBSITE_SETTINGS.otp_trigger_question_count,
       chat_idle_ttl_hours: DEFAULT_WEBSITE_SETTINGS.chat_idle_ttl_hours,
       chat_session_retention_days: DEFAULT_WEBSITE_SETTINGS.chat_session_retention_days,
+      mail_from_name: DEFAULT_WEBSITE_SETTINGS.mail_from_name,
+      mail_from_email: DEFAULT_WEBSITE_SETTINGS.mail_from_email,
     },
   });
 }
@@ -180,6 +246,11 @@ async function getChatSessionRetentionDays(prisma) {
   return parsed;
 }
 
+async function getMailFromAddress(prisma) {
+  const settings = await getOrCreateWebsiteSettings(prisma);
+  return formatMailFromAddress(settings.mail_from_name, settings.mail_from_email);
+}
+
 module.exports = {
   DEFAULT_WEBSITE_SETTINGS,
   MAX_CHAT_IDLE_TTL_HOURS,
@@ -188,10 +259,13 @@ module.exports = {
   MIN_CHAT_IDLE_TTL_HOURS,
   MIN_CHAT_SESSION_RETENTION_DAYS,
   MIN_OTP_TRIGGER_QUESTIONS,
+  formatMailFromAddress,
   getChatSessionRetentionDays,
+  getMailFromAddress,
   getOrCreateWebsiteSettings,
   parseChatIdleTtlHours,
   parseChatSessionRetentionDays,
+  parseMailFromEmail,
   parseOtpTriggerQuestionCount,
   sanitizeWebsiteSettingsInput,
   toPublicWebsiteSettings,

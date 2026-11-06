@@ -3,9 +3,14 @@ const express = require('express');
 const passport = require('passport');
 const { PrismaClient } = require('@prisma/client');
 const { getAdminUrl } = require('../config/appUrls');
+const authController = require('../controllers/authController');
 const prisma = new PrismaClient();
 
 const router = express.Router();
+
+router.post('/login', authController.login);
+router.post('/forgot-password', authController.forgotPassword);
+router.post('/reset-password', authController.resetPassword);
 
 // 🔹 Start Google login
 router.get(
@@ -53,7 +58,17 @@ router.get('/status', async (req, res) => {
 
         const freshUser = await prisma.users.findUnique({
             where: { id: req.user.id },
-            select: { id: true, username: true, email: true, role: true, can_login: true },
+            select: {
+                id: true,
+                full_name: true,
+                email: true,
+                phone: true,
+                role: true,
+                can_login: true,
+                notify_email: true,
+                notify_sms: true,
+                notify_facebook: true,
+            },
         });
 
         if (!freshUser || freshUser.can_login === false) {
@@ -68,9 +83,13 @@ router.get('/status', async (req, res) => {
             loggedIn: true,
             user: {
                 id: freshUser.id,
-                username: freshUser.username,
+                full_name: freshUser.full_name,
                 email: freshUser.email,
-                role: freshUser.role
+                phone: freshUser.phone,
+                role: freshUser.role,
+                notify_email: freshUser.notify_email,
+                notify_sms: freshUser.notify_sms,
+                notify_facebook: freshUser.notify_facebook,
             },
         });
     } catch (err) {

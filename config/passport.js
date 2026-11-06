@@ -40,10 +40,11 @@ Google login will be disabled until these are provided.
                         user = await prisma.users.create({
                             data: {
                                 email,
-                                provider: "google",
+                                full_name: profile.displayName || email,
+                                provider: 'google',
                                 provider_id: profile.id,
                                 can_login: false, // 🚫 requires admin approval
-                                username: profile.displayName.replace(/\s+/g, '').toLowerCase(), // generate one
+                                role: 'agent',
                             },
                         });
                     }

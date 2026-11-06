@@ -1,4 +1,6 @@
 const nodemailer = require('nodemailer');
+const { prisma } = require('../prisma/prismaClient');
+const { getMailFromAddress } = require('./websiteSettings');
 
 const OTP_TTL_MINUTES = 10;
 
@@ -18,11 +20,21 @@ function isEmailDeliveryConfigured() {
   return isSmtpConfigured() || isResendConfigured();
 }
 
-function getFromAddress() {
+function getEnvFromAddress() {
   return process.env.OTP_EMAIL_FROM
     || process.env.SMTP_FROM
     || process.env.SMTP_USER
     || 'Mr. Boss Realty <onboarding@resend.dev>';
+}
+
+async function resolveFromAddress() {
+  try {
+    const configured = await getMailFromAddress(prisma);
+    if (configured) return configured;
+  } catch (error) {
+    console.warn('[email] Failed to load mailing settings:', error?.message || error);
+  }
+  return getEnvFromAddress();
 }
 
 function createTransport() {
@@ -67,7 +79,44 @@ function buildOtpEmailContent(code) {
   return { subject, text, html };
 }
 
-async function sendViaResend(to, subject, html, text) {
+function createEmailDeliveryError(message, statusCode = 502) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function explainResendFailure(status, errorBody, from) {
+  let parsed = null;
+  try {
+    parsed = JSON.parse(errorBody);
+  } catch (_) {
+    parsed = null;
+  }
+
+  const providerMessage = String(parsed?.message || errorBody || '').trim();
+  const lower = providerMessage.toLowerCase();
+
+  if (lower.includes('domain is not verified') || lower.includes('verify your domain')) {
+    return createEmailDeliveryError(
+      `The From email domain is not verified in Resend yet. Verify it at resend.com/domains, or temporarily clear Settings → Website → Mailing and use OTP_EMAIL_FROM=Mr. Boss Realty <onboarding@resend.dev> for local testing.`,
+      400,
+    );
+  }
+
+  if (lower.includes('only send testing emails to your own email')) {
+    return createEmailDeliveryError(
+      `Resend test mode can only send to your Resend account email until a domain is verified. Verify mrbossrealty.com at resend.com/domains, or request the reset using your Resend account email.`,
+      400,
+    );
+  }
+
+  return createEmailDeliveryError(
+    `Email could not be sent${from ? ` (from ${from})` : ''}. ${providerMessage || `Resend returned ${status}.`}`,
+    status >= 400 && status < 500 ? 400 : 502,
+  );
+}
+
+async function sendViaResend(to, subject, html, text, from) {
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -75,7 +124,7 @@ async function sendViaResend(to, subject, html, text) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: getFromAddress(),
+      from,
       to: [to],
       subject,
       html,
@@ -85,13 +134,13 @@ async function sendViaResend(to, subject, html, text) {
 
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(`Resend API error (${response.status}): ${errorBody}`);
+    throw explainResendFailure(response.status, errorBody, from);
   }
 
   return { delivered: true, provider: 'resend', devFallback: false };
 }
 
-async function sendViaSmtp(to, subject, html, text) {
+async function sendViaSmtp(to, subject, html, text, from) {
   const transport = createTransport();
   if (!transport) {
     return null;
@@ -99,7 +148,7 @@ async function sendViaSmtp(to, subject, html, text) {
 
   await transport.verify();
   await transport.sendMail({
-    from: getFromAddress(),
+    from,
     to,
     subject,
     html,
@@ -109,20 +158,20 @@ async function sendViaSmtp(to, subject, html, text) {
   return { delivered: true, provider: 'smtp', devFallback: false };
 }
 
-async function sendOtpEmail(to, code) {
+async function sendEmail(to, { subject, text, html }) {
   const email = String(to || '').trim().toLowerCase();
   if (!email) {
     throw new Error('Email address is required.');
   }
 
-  const { subject, text, html } = buildOtpEmailContent(code);
+  const from = await resolveFromAddress();
 
   if (isResendConfigured()) {
-    return sendViaResend(email, subject, html, text);
+    return sendViaResend(email, subject, html, text, from);
   }
 
   if (isSmtpConfigured()) {
-    const result = await sendViaSmtp(email, subject, html, text);
+    const result = await sendViaSmtp(email, subject, html, text, from);
     if (result) {
       return result;
     }
@@ -132,8 +181,49 @@ async function sendOtpEmail(to, code) {
     throw new Error('Email delivery is not configured. Set RESEND_API_KEY or SMTP settings.');
   }
 
-  console.info(`[AI OTP email] not configured — dev fallback to=${email} code=${code}`);
+  console.info(`[email] not configured — dev fallback to=${email} subject=${subject}`);
   return { delivered: false, provider: 'dev', devFallback: true };
+}
+
+async function sendOtpEmail(to, code) {
+  const { subject, text, html } = buildOtpEmailContent(code);
+  const result = await sendEmail(to, { subject, text, html });
+  if (result.devFallback) {
+    console.info(`[AI OTP email] not configured — dev fallback to=${to} code=${code}`);
+  }
+  return result;
+}
+
+function buildPasswordResetEmailContent(resetUrl) {
+  const subject = 'Reset your Mr. Boss Realty password';
+  const text = [
+    'We received a request to set or reset your Mr. Boss Realty account password.',
+    '',
+    'Open this link to choose a new password:',
+    resetUrl,
+    '',
+    'This link expires in 1 hour. If you did not request this, you can ignore this email.',
+  ].join('\n');
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f2744;">
+      <p>We received a request to set or reset your Mr. Boss Realty account password.</p>
+      <p style="margin:24px 0;">
+        <a href="${resetUrl}" style="display:inline-block;background:#0f2744;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:600;">
+          Choose a new password
+        </a>
+      </p>
+      <p style="color:#64748b;font-size:14px;">Or copy this link:<br>${resetUrl}</p>
+      <p style="color:#64748b;font-size:14px;">This link expires in 1 hour. If you did not request this, you can ignore this email.</p>
+    </div>
+  `.trim();
+
+  return { subject, text, html };
+}
+
+async function sendPasswordResetEmail(to, resetUrl) {
+  const { subject, text, html } = buildPasswordResetEmailContent(resetUrl);
+  return sendEmail(to, { subject, text, html });
 }
 
 function logDeliveryStatusOnStartup() {
@@ -160,5 +250,7 @@ module.exports = {
   isResendConfigured,
   isSmtpConfigured,
   logDeliveryStatusOnStartup,
+  sendEmail,
   sendOtpEmail,
+  sendPasswordResetEmail,
 };
