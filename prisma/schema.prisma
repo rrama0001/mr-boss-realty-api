@@ -261,3 +261,33 @@ model leads {
   @@index([verified_at])
   @@index([building_ref])
 }
+
+/// Persistent website/Messenger AI chat sessions for preference memory and lead context.
+model ai_chat_sessions {
+  id               Int                @id @default(autoincrement())
+  session_key      String             @unique
+  source           String             @default("website")
+  preferences_json String?
+  unit_ref         String?
+  building_ref     String?
+  project_slug     String?
+  summary          String?
+  last_message_at  DateTime           @default(now())
+  created_at       DateTime           @default(now())
+  updated_at       DateTime           @updatedAt
+  messages         ai_chat_messages[]
+
+  @@index([last_message_at])
+  @@index([source])
+}
+
+model ai_chat_messages {
+  id         Int              @id @default(autoincrement())
+  session_id Int
+  role       String
+  content    String
+  created_at DateTime         @default(now())
+  session    ai_chat_sessions @relation(fields: [session_id], references: [id], onDelete: Cascade)
+
+  @@index([session_id, created_at])
+}

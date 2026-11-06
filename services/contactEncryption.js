@@ -4,7 +4,7 @@ const { normalizeMobileNumber } = require('./aiRestrictedInfo');
 const ALGORITHM = 'aes-256-gcm';
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
-const INQUIRY_MAX_LENGTH = 500;
+const INQUIRY_MAX_LENGTH = 1000;
 
 function getEncryptionKey() {
   const raw = String(process.env.LEADS_ENCRYPTION_KEY || '').trim();

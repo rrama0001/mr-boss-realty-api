@@ -4,7 +4,20 @@ const {
     buildPropertySnapshot,
     buildSystemContent,
     isInventoryComparisonQuestion,
+    resolveInventoryComparisonGroundTruth,
+    formatComparisonGroundTruth,
 } = require('../services/aiPropertySnapshot');
+const {
+    extractPreferencesFromMessage,
+    formatPreferencesBlock,
+} = require('../services/aiClientPreferences');
+const {
+    hydrateConversationFromDb,
+    persistConversationTurn,
+    getClientPreferences,
+    setClientPreferences,
+    clearClientPreferences,
+} = require('../services/aiConversationPersistence');
 const {
     resolveConversationBuildingFocus,
     collectPrivateRedactionTermsFromProjects,
@@ -183,9 +196,24 @@ exports.getReply = async (req, res) => {
 
         const dataText = buildPropertySnapshot(projects);
         const userKey = senderId || source || 'test-user';
+        const chatSource = String(source || 'website').trim().toLowerCase() || 'website';
         const globalRedactNames = collectPrivateRedactionTermsFromProjects(projects);
 
+        await hydrateConversationFromDb(prisma, userKey);
+
+        const availableCities = [...new Set(
+            (projects || []).map((project) => String(project.city || '').trim()).filter(Boolean),
+        )];
+        const preferenceUpdate = extractPreferencesFromMessage(message, {
+            cities: availableCities,
+            previous: getClientPreferences(userKey),
+        });
+        const clientPreferences = setClientPreferences(userKey, preferenceUpdate.preferences);
+
         const comparisonQuestion = isInventoryComparisonQuestion(message);
+        const comparisonTruth = comparisonQuestion
+            ? resolveInventoryComparisonGroundTruth(projects, message, clientPreferences)
+            : null;
         const previousBuildingFocus = conversationBuildingFocus.get(userKey) || null;
         const buildingFocus = comparisonQuestion
             ? null
@@ -215,6 +243,8 @@ exports.getReply = async (req, res) => {
             buildingSummary: buildingFocus?.summary || '',
             unitSummary: unitFocus?.summary || '',
             companyContact,
+            preferencesBlock: formatPreferencesBlock(clientPreferences),
+            comparisonGroundTruth: formatComparisonGroundTruth(comparisonTruth),
         });
 
         if (!conversations.has(userKey)) {
@@ -227,7 +257,7 @@ exports.getReply = async (req, res) => {
         chatHistory.push({ role: 'user', content: message });
         recordUserMessage(userKey);
 
-        const isWebsiteChat = String(source || '').trim().toLowerCase() === 'website';
+        const isWebsiteChat = chatSource === 'website';
         const otpTriggerQuestionCount = isWebsiteChat
             ? await getOtpTriggerQuestionCount()
             : null;
@@ -240,6 +270,18 @@ exports.getReply = async (req, res) => {
             && !isVerified(userKey)
             && isQuestionLimitReached(userKey, otpTriggerQuestionCount + 1)
         ) {
+            await persistConversationTurn(prisma, {
+                userKey,
+                source: chatSource,
+                userMessage: message,
+                assistantMessage: buildVerificationConsentReply('chat_quota'),
+                preferences: clientPreferences,
+                unitRef: activeFocus?.unitRef || null,
+                buildingRef: activeFocus?.buildingRef || null,
+            }).catch((error) => {
+                console.error('Failed to persist chat during OTP gate:', error?.message || error);
+            });
+
             return res.json({
                 ...startQuestionLimitVerificationFlow({
                     userKey,
@@ -256,7 +298,7 @@ exports.getReply = async (req, res) => {
         const completion = await openai.chat.completions.create({
             model: aiModel,
             messages: chatHistory,
-            temperature: aiSettings?.temperature || 0.3,
+            temperature: comparisonQuestion ? Math.min(aiSettings?.temperature || 0.3, 0.1) : (aiSettings?.temperature || 0.3),
         });
 
         trackCompletionUsage(userKey, completion.usage);
@@ -273,8 +315,21 @@ exports.getReply = async (req, res) => {
 
         chatHistory.push({ role: 'assistant', content: aiReply });
 
+        await persistConversationTurn(prisma, {
+            userKey,
+            source: chatSource,
+            userMessage: message,
+            assistantMessage: aiReply,
+            preferences: clientPreferences,
+            unitRef: activeFocus?.unitRef || null,
+            buildingRef: activeFocus?.buildingRef || null,
+        }).catch((error) => {
+            console.error('Failed to persist chat turn:', error?.message || error);
+        });
+
         if (conversationHasEnded(aiReply)) {
             clearConversationState(userKey);
+            clearClientPreferences(userKey);
             clearSession(userKey);
             clearUsage(userKey);
         }
@@ -363,8 +418,12 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
 
     const dataText = buildPropertySnapshot(projects);
     const globalRedactNames = collectPrivateRedactionTermsFromProjects(projects);
+    const clientPreferences = getClientPreferences(userKey);
 
     const comparisonQuestion = isInventoryComparisonQuestion(message);
+    const comparisonTruth = comparisonQuestion
+        ? resolveInventoryComparisonGroundTruth(projects, message, clientPreferences)
+        : null;
     const previousBuildingFocus = conversationBuildingFocus.get(userKey) || null;
     const buildingFocus = comparisonQuestion
         ? null
@@ -394,13 +453,15 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
         buildingSummary: buildingFocus?.summary || '',
         unitSummary: unitFocus?.summary || '',
         companyContact,
+        preferencesBlock: formatPreferencesBlock(clientPreferences),
+        comparisonGroundTruth: formatComparisonGroundTruth(comparisonTruth),
     });
     chatHistory[0] = { role: 'system', content: systemContent };
 
     const completion = await openai.chat.completions.create({
         model: aiModel,
         messages: chatHistory,
-        temperature: aiSettings?.temperature || 0.3,
+        temperature: comparisonQuestion ? Math.min(aiSettings?.temperature || 0.3, 0.1) : (aiSettings?.temperature || 0.3),
     });
 
     trackCompletionUsage(userKey, completion.usage);
@@ -417,8 +478,21 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
 
     chatHistory.push({ role: 'assistant', content: aiReply });
 
+    await persistConversationTurn(prisma, {
+        userKey,
+        source: 'website',
+        userMessage: null,
+        assistantMessage: aiReply,
+        preferences: clientPreferences,
+        unitRef: activeFocus?.unitRef || null,
+        buildingRef: activeFocus?.buildingRef || null,
+    }).catch((error) => {
+        console.error('Failed to persist post-OTP reply:', error?.message || error);
+    });
+
     if (conversationHasEnded(aiReply)) {
         clearConversationState(userKey);
+        clearClientPreferences(userKey);
         clearSession(userKey);
         clearUsage(userKey);
     }

@@ -10,6 +10,7 @@ const {
 } = require('./contactEncryption');
 const { resolveBuildingIdFromRef } = require('./buildingSlug');
 const { resolveUnitIdFromRef } = require('./unitSlug');
+const { getSessionSummary } = require('./aiConversationPersistence');
 
 async function resolvePropertyLabel(prisma, buildingRef, unitRef) {
   if (unitRef) {
@@ -123,7 +124,19 @@ async function saveVerifiedLead(prisma, userKey, session) {
   const contactHash = hashContact(contact);
   const buildingRef = session.buildingRef || null;
   const unitRef = session.unitRef || null;
-  const inquiryMessage = truncateInquiryMessage(session.pendingMessage);
+  let conversationSummary = null;
+  try {
+    conversationSummary = await getSessionSummary(prisma, userKey);
+  } catch (error) {
+    console.error('Failed to load AI chat summary for lead:', error?.message || error);
+  }
+
+  const pending = String(session.pendingMessage || '').trim();
+  const summary = String(conversationSummary || '').trim();
+  const combinedInquiry = [summary ? `Chat summary: ${summary}` : null, pending ? `Last question: ${pending}` : null]
+    .filter(Boolean)
+    .join('\n');
+  const inquiryMessage = truncateInquiryMessage(combinedInquiry || pending);
   const verifiedAt = new Date();
 
   const existing = await prisma.leads.findFirst({

@@ -255,6 +255,7 @@ function collectComparableUnits(projects) {
 
     for (const project of projects || []) {
         const publicName = getPublicProjectDisplayName(project);
+        const isPrivate = Boolean(project.is_private_on_website);
         const buildings = (project.buildings || []).filter((building) => !building.deleted_at);
 
         for (const building of buildings) {
@@ -270,9 +271,14 @@ function collectComparableUnits(projects) {
                     listingType: String(unit.listing_type || 'sale').toLowerCase(),
                     salePrice: Number(unit.unit_price),
                     monthlyRent: Number(unit.monthly_rent),
+                    bedrooms: unit.bedrooms == null ? null : Number(unit.bedrooms),
+                    petsAllowed: unit.is_pet_allowed === true,
                     unitRef: getUnitRef(unit),
                     unitPage: getPublicUnitUrl(project, getUnitRef(unit)),
                     isStudio: isStudioUnitType(unit.unit_type),
+                    city: String(project.city || '').trim(),
+                    developer: isPrivate ? null : String(project.developer || '').trim() || null,
+                    address: String(project.location || '').trim() || null,
                 });
             }
         }
@@ -283,16 +289,22 @@ function collectComparableUnits(projects) {
 
 function formatRankedUnitLine(entry, priceLabel, priceValue) {
     const room = entry.roomNumber ? `Room ${entry.roomNumber}` : 'Room n/a';
+    const city = entry.city ? ` | City: ${entry.city}` : '';
+    const developer = entry.developer ? ` | Developer: ${entry.developer}` : '';
+    const address = entry.address ? ` | Address: ${entry.address}` : '';
     const page = entry.unitPage ? ` | Unit Page: ${entry.unitPage}` : '';
-    return `- ${entry.unitType} | ${room} | ${entry.buildingName} | ${entry.projectName} | ${priceLabel}: ${formatMoney(priceValue)} | Unit Ref (internal): ${entry.unitRef}${page}`;
+    return `- ${entry.unitType} | ${room} | ${entry.buildingName} | ${entry.projectName}${city}${developer}${address} | ${priceLabel}: ${formatMoney(priceValue)} | Unit Ref (internal): ${entry.unitRef}${page}`;
 }
 
-function buildPriceComparisonIndex(projects, { limit = 8 } = {}) {
-    const units = collectComparableUnits(projects);
-    const saleStudios = units
+function rankedSaleStudios(units) {
+    return units
         .filter((entry) => entry.isStudio && entry.listingType === 'sale' && Number.isFinite(entry.salePrice) && entry.salePrice > 0)
-        .sort((a, b) => b.salePrice - a.salePrice)
-        .slice(0, limit);
+        .sort((a, b) => b.salePrice - a.salePrice);
+}
+
+function buildPriceComparisonIndex(projects, { limit = 8, perCityLimit = 5 } = {}) {
+    const units = collectComparableUnits(projects);
+    const saleStudios = rankedSaleStudios(units).slice(0, limit);
     const saleUnits = units
         .filter((entry) => entry.listingType === 'sale' && Number.isFinite(entry.salePrice) && entry.salePrice > 0)
         .sort((a, b) => b.salePrice - a.salePrice)
@@ -302,22 +314,44 @@ function buildPriceComparisonIndex(projects, { limit = 8 } = {}) {
         .sort((a, b) => b.monthlyRent - a.monthlyRent)
         .slice(0, limit);
 
+    const studioCities = [...new Set(
+        rankedSaleStudios(units)
+            .map((entry) => entry.city)
+            .filter(Boolean),
+    )].sort((a, b) => a.localeCompare(b));
+
     const lines = [
         'Price comparison index (pre-ranked from the database — prefer this for most/least expensive questions):',
-        'Studio sale units by Sale Price (highest first):',
+        'Studio sale units by Sale Price (highest first, all cities):',
         ...(saleStudios.length
             ? saleStudios.map((entry) => formatRankedUnitLine(entry, 'Sale Price', entry.salePrice))
             : ['- (none)']),
-        'All sale units by Sale Price (highest first):',
+    ];
+
+    for (const city of studioCities) {
+        const cityStudios = rankedSaleStudios(units)
+            .filter((entry) => entry.city.toLowerCase() === city.toLowerCase())
+            .slice(0, perCityLimit);
+
+        lines.push(`Studio sale units in ${city} by Sale Price (highest first):`);
+        lines.push(
+            ...(cityStudios.length
+                ? cityStudios.map((entry) => formatRankedUnitLine(entry, 'Sale Price', entry.salePrice))
+                : ['- (none)']),
+        );
+    }
+
+    lines.push(
+        'All sale units by Sale Price (highest first, all cities):',
         ...(saleUnits.length
             ? saleUnits.map((entry) => formatRankedUnitLine(entry, 'Sale Price', entry.salePrice))
             : ['- (none)']),
-        'Studio rent units by Monthly Rent (highest first):',
+        'Studio rent units by Monthly Rent (highest first, all cities):',
         ...(rentStudios.length
             ? rentStudios.map((entry) => formatRankedUnitLine(entry, 'Monthly Rent', entry.monthlyRent))
             : ['- (none)']),
-        'Notes: Unit types containing "Studio" (including "SOHO - Studio") count as studio units. Active conversation focus must NOT override this ranking for comparison questions.',
-    ];
+        'Notes: Unit types containing "Studio" (including "SOHO - Studio") count as studio units. Active conversation focus must NOT override this ranking for comparison questions. When the client names a city (example: Cebu City only), use that city section and never answer with a unit from a different city.',
+    );
 
     return `${lines.join('\n')}\n`;
 }
@@ -330,6 +364,172 @@ function isInventoryComparisonQuestion(message) {
         /\b(most|least|highest|lowest|cheapest|priciest|expensive)\b/i.test(text)
         && /\b(price|priced|expensive|cheap|cost|studio|unit|bedroom|br|rent|sale)\b/i.test(text)
     );
+}
+
+function normalizePlaceName(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+}
+
+function extractCityFilter(message, cities = []) {
+    const text = normalizePlaceName(message);
+    if (!text || !cities.length) return null;
+
+    const sortedCities = [...cities]
+        .filter(Boolean)
+        .sort((a, b) => b.length - a.length);
+
+    for (const city of sortedCities) {
+        const needle = normalizePlaceName(city);
+        if (!needle) continue;
+        if (text.includes(needle)) return city;
+
+        const shortName = needle.replace(/\s+city$/, '');
+        if (
+            shortName.length >= 4
+            && (
+                text.includes(` in ${shortName}`)
+                || text.includes(` within ${shortName}`)
+                || text.includes(`${shortName} only`)
+                || text.includes(`preferably ${shortName}`)
+                || text.includes(`preferably within ${shortName}`)
+            )
+        ) {
+            return city;
+        }
+    }
+
+    return null;
+}
+
+function resolveInventoryComparisonGroundTruth(projects, message, preferences = {}) {
+    if (!isInventoryComparisonQuestion(message)) return null;
+
+    const text = String(message || '');
+    const prefs = preferences || {};
+    const units = collectComparableUnits(projects);
+    const cities = [...new Set(units.map((entry) => entry.city).filter(Boolean))];
+    const cityFilter = extractCityFilter(text, cities) || prefs.city || null;
+    const wantStudio = /\bstudio\b/i.test(text) || /studio/i.test(String(prefs.unitType || ''));
+    let wantRent = /\brent\b/i.test(text) && !/\b(for sale|sale price|to buy|buying)\b/i.test(text);
+    if (prefs.listingType === 'rent' && !/\b(for sale|sale price|to buy|buying)\b/i.test(text)) {
+        wantRent = true;
+    }
+    if (prefs.listingType === 'sale' && !/\brent\b/i.test(text)) {
+        wantRent = false;
+    }
+    const wantLowest = /\b(least|lowest|cheapest)\b/i.test(text);
+    const wantPets = prefs.pets === true
+        || (/\bpets?\b/i.test(text) && /\b(friendly|allow|allowed)\b/i.test(text));
+
+    let candidates = [...units];
+    if (cityFilter) {
+        candidates = candidates.filter(
+            (entry) => normalizePlaceName(entry.city) === normalizePlaceName(cityFilter),
+        );
+    }
+    if (wantStudio) {
+        candidates = candidates.filter((entry) => entry.isStudio);
+    } else if (prefs.bedrooms != null) {
+        candidates = candidates.filter((entry) => Number(entry.bedrooms) === Number(prefs.bedrooms));
+    }
+    if (wantPets) {
+        candidates = candidates.filter((entry) => entry.petsAllowed);
+    }
+
+    let priceLabel = 'Sale Price';
+    if (wantRent) {
+        priceLabel = 'Monthly Rent';
+        candidates = candidates.filter(
+            (entry) => entry.listingType === 'rent' && Number.isFinite(entry.monthlyRent) && entry.monthlyRent > 0,
+        );
+        if (prefs.budgetMax != null) {
+            candidates = candidates.filter((entry) => entry.monthlyRent <= Number(prefs.budgetMax));
+        }
+        candidates.sort((a, b) => (
+            wantLowest ? a.monthlyRent - b.monthlyRent : b.monthlyRent - a.monthlyRent
+        ));
+    } else {
+        candidates = candidates.filter(
+            (entry) => entry.listingType === 'sale' && Number.isFinite(entry.salePrice) && entry.salePrice > 0,
+        );
+        if (prefs.budgetMax != null) {
+            candidates = candidates.filter((entry) => entry.salePrice <= Number(prefs.budgetMax));
+        }
+        candidates.sort((a, b) => (
+            wantLowest ? a.salePrice - b.salePrice : b.salePrice - a.salePrice
+        ));
+    }
+
+    const winner = candidates[0] || null;
+    if (!winner) {
+        return {
+            found: false,
+            cityFilter,
+            wantStudio,
+            wantRent,
+            wantLowest,
+            wantPets,
+        };
+    }
+
+    return {
+        found: true,
+        cityFilter,
+        wantStudio,
+        wantRent,
+        wantLowest,
+        wantPets,
+        priceLabel,
+        priceValue: wantRent ? winner.monthlyRent : winner.salePrice,
+        entry: winner,
+    };
+}
+
+function formatComparisonGroundTruth(truth) {
+    if (!truth) return '';
+
+    if (!truth.found) {
+        const scope = [
+            truth.wantStudio ? 'studio' : null,
+            truth.wantRent ? 'rent' : 'sale',
+            truth.wantPets ? 'pet-friendly' : null,
+            truth.cityFilter ? `in ${truth.cityFilter}` : null,
+        ].filter(Boolean).join(' ');
+
+        return `Ground-truth inventory answer (authoritative):
+No matching ${scope || 'unit'} was found in the current inventory.
+Tell the client clearly that nothing matches those filters. Do not substitute a unit from another city or type.
+
+`;
+    }
+
+    const { entry, priceLabel, priceValue, cityFilter } = truth;
+    const room = entry.roomNumber ? `Room ${entry.roomNumber}` : 'Room n/a';
+    const filters = [
+        cityFilter ? `city = ${cityFilter}` : 'all cities',
+        truth.wantStudio ? 'studio units only' : null,
+        truth.wantPets ? 'pet-friendly only' : null,
+        truth.wantLowest ? 'lowest price' : 'highest price',
+    ].filter(Boolean).join(', ');
+
+    return `Ground-truth inventory answer (authoritative — use these exact facts; do not pick a different unit):
+- Filter applied: ${filters}
+- Unit type: ${entry.unitType}
+- Room: ${room}
+- Building: ${entry.buildingName}
+- Project / Property: ${entry.projectName}
+- City: ${entry.city || 'n/a'}
+- Developer: ${entry.developer || 'n/a'}
+- Address: ${entry.address || 'n/a'}
+- Pets allowed: ${entry.petsAllowed ? 'yes' : 'no'}
+- ${priceLabel}: ${formatMoney(priceValue)}
+- Unit Page: ${entry.unitPage || 'n/a'}
+Present this in natural language for the client. Include project, city, developer, address (if available), building, room, unit type, exact price, and the Unit Page as a markdown link. Never mention Unit Ref.
+
+`;
 }
 
 function buildPropertySnapshot(projects) {
@@ -445,7 +645,13 @@ function buildPropertySnapshot(projects) {
 }
 
 function buildSystemContent(aiPrompt, dataText, focusSummaries = {}) {
-    const { buildingSummary = '', unitSummary = '', companyContact = null } = focusSummaries;
+    const {
+        buildingSummary = '',
+        unitSummary = '',
+        companyContact = null,
+        comparisonGroundTruth = '',
+        preferencesBlock = '',
+    } = focusSummaries;
 
     const buildingFocusBlock = buildingSummary
         ? `Active whole-property listing focus for this conversation (use this as the primary listing unless the user switches):
@@ -471,9 +677,15 @@ ${companyEmail ? `- Email: ${companyEmail}` : ''}
 `
         : '';
 
+    const comparisonGroundTruthBlock = comparisonGroundTruth
+        ? `${comparisonGroundTruth}`
+        : '';
+
+    const clientPreferencesBlock = preferencesBlock || '';
+
     return `${aiPrompt}
 
-${buildingFocusBlock}${unitFocusBlock}${companyContactBlock}You have access to the following database information:
+${buildingFocusBlock}${unitFocusBlock}${clientPreferencesBlock}${comparisonGroundTruthBlock}${companyContactBlock}You have access to the following database information:
 ${dataText}
 Whole-property listing rules:
 - Each whole-property listing has an internal 8-character Listing Ref and a Listing Page URL (example: /properties/{slug}/{ref}). The Listing Ref is for internal matching only.
@@ -503,9 +715,11 @@ Media rules:
 Inventory answering rules:
 - You may answer any inventory question using fields present in the snapshot or active focus. Be complete and specific.
 - If a requested detail is missing from the snapshot, say it is not available yet — never invent values.
-- For most/least expensive, cheapest, highest/lowest priced, or similar ranking questions: compare ALL matching units using the Price comparison index first. Do NOT answer from Active unit focus alone.
+- For most/least expensive, cheapest, highest/lowest priced, or similar ranking questions: if a Ground-truth inventory answer is present, use it exactly. Otherwise use the Price comparison index. Do NOT answer from Active unit focus alone.
 - Treat "SOHO - Studio" and any unit type containing "Studio" as studio units when the client asks about studios.
-- Name the winning unit with property, building, room, unit type, and exact Sale Price or rent from the index.
+- If the client specifies a city (examples: "Cebu City only", "in Cebu", "preferably within Cebu City"), filter to that city. Never return a unit from another city.
+- Reuse Known client preferences across turns. If they switch city/type/budget ("actually", "instead", "switch to"), follow the latest message and stop using old conflicting preferences.
+- When giving the answer, always include: unit type, room number, building, project/property name, city, developer (if available), address (if available), exact Sale Price or rent, and the Unit Page link.
 - When asked for Google Earth / Maps / map location, share the exact Google Earth and Google Maps URLs from the snapshot (or active focus). Prefer markdown links with friendly text (example: [Open in Google Earth](url)).
 - Never reveal private owner/landlord identity or private owner contact numbers/emails. Use Mr. Boss Realty company contact instead when outreach is needed.
 - For private properties, keep using the public display name ("Private Property") and never expose owner identity.
@@ -527,5 +741,7 @@ module.exports = {
     buildSystemContent,
     buildPriceComparisonIndex,
     isInventoryComparisonQuestion,
+    resolveInventoryComparisonGroundTruth,
+    formatComparisonGroundTruth,
     formatDeveloperAiLines,
 };
