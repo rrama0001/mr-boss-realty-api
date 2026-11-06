@@ -11,6 +11,10 @@ const {
   hasAnyPreference,
   buildConversationSummary,
 } = require('./aiClientPreferences');
+const {
+  getChatSessionRetentionDays,
+  parseChatSessionRetentionDays,
+} = require('./websiteSettings');
 
 const MAX_REHYDRATED_MESSAGES = 40;
 const clientPreferencesByUser = new Map();
@@ -232,6 +236,47 @@ async function getSessionSummary(prisma, userKey) {
   });
 }
 
+/**
+ * Deletes AI chat sessions older than retentionDays (by last_message_at).
+ * Messages are removed via ON DELETE CASCADE.
+ * retentionDays null/empty = purge disabled (from website settings).
+ */
+async function purgeExpiredChatSessions(prisma, {
+  retentionDays,
+  now = new Date(),
+} = {}) {
+  let days = retentionDays;
+  if (days === undefined) {
+    days = await getChatSessionRetentionDays(prisma);
+  } else {
+    days = parseChatSessionRetentionDays(days);
+  }
+
+  if (days == null) {
+    return {
+      retentionDays: null,
+      cutoff: null,
+      deletedSessions: 0,
+      skipped: true,
+    };
+  }
+
+  const cutoff = new Date(now.getTime() - (days * 24 * 60 * 60 * 1000));
+
+  const result = await prisma.ai_chat_sessions.deleteMany({
+    where: {
+      last_message_at: { lt: cutoff },
+    },
+  });
+
+  return {
+    retentionDays: days,
+    cutoff,
+    deletedSessions: result.count,
+    skipped: false,
+  };
+}
+
 module.exports = {
   clientPreferencesByUser,
   getClientPreferences,
@@ -241,4 +286,5 @@ module.exports = {
   hydrateConversationFromDb,
   persistConversationTurn,
   getSessionSummary,
+  purgeExpiredChatSessions,
 };

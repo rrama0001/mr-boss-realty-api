@@ -159,6 +159,8 @@ const server = app.listen(PORT, () => {
         console.warn('Catalog sync skipped:', err.message || err);
     });
 
+    require('./services/aiChatRetentionJob').startAiChatRetentionJob();
+
     if (process.env.NODE_ENV === 'production') {
         console.log(`✅ Primary URL: ${process.env.API_URL || 'Not set'}`);
     }
@@ -182,6 +184,12 @@ async function shutdown() {
     shuttingDown = true;
 
     console.log('\nShutting down API server...');
+
+    try {
+        require('./services/aiChatRetentionJob').stopAiChatRetentionJob();
+    } catch (_) {
+        // ignore
+    }
 
     clearLockFile();
 

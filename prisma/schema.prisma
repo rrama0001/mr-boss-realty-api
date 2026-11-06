@@ -241,6 +241,8 @@ model website_settings {
   otp_trigger_question_count     Int?
   /// NULL = no auto-delete. Positive = clear idle website chat UI after this many hours.
   chat_idle_ttl_hours            Int?
+  /// NULL = no DB purge. Positive = delete ai_chat_sessions older than this many days.
+  chat_session_retention_days    Int?     @default(60)
   created_at                     DateTime @default(now())
   updated_at                     DateTime @updatedAt
 }
