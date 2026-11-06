@@ -4,9 +4,11 @@ const {
     buildPropertySnapshot,
     buildSystemContent,
     isInventoryComparisonQuestion,
-    shouldIgnoreListingFocus,
+    isPetAvailabilityQuestion,
+    shouldInjectListingFocus,
     resolveInventoryComparisonGroundTruth,
-    formatComparisonGroundTruth,
+    resolvePetFriendlyGroundTruth,
+    formatInventoryGroundTruth,
 } = require('../services/aiPropertySnapshot');
 const {
     extractPreferencesFromMessage,
@@ -212,14 +214,17 @@ exports.getReply = async (req, res) => {
         const clientPreferences = setClientPreferences(userKey, preferenceUpdate.preferences);
 
         const comparisonQuestion = isInventoryComparisonQuestion(message, projects);
-        const ignoreListingFocus = shouldIgnoreListingFocus(message, projects);
+        const petQuestion = isPetAvailabilityQuestion(message);
+        const injectListingFocus = shouldInjectListingFocus(message, projects);
         const comparisonTruth = comparisonQuestion
             ? resolveInventoryComparisonGroundTruth(projects, message, clientPreferences)
-            : null;
+            : (petQuestion
+                ? resolvePetFriendlyGroundTruth(projects, message, clientPreferences)
+                : null);
         const previousBuildingFocus = conversationBuildingFocus.get(userKey) || null;
-        const buildingFocus = (comparisonQuestion || ignoreListingFocus)
-            ? null
-            : resolveConversationBuildingFocus(projects, message, previousBuildingFocus);
+        const buildingFocus = injectListingFocus
+            ? resolveConversationBuildingFocus(projects, message, previousBuildingFocus)
+            : null;
 
         if (buildingFocus) {
             conversationBuildingFocus.set(userKey, { buildingRef: buildingFocus.buildingRef });
@@ -227,7 +232,7 @@ exports.getReply = async (req, res) => {
         }
 
         let unitFocus = null;
-        if (!comparisonQuestion && !ignoreListingFocus && !buildingFocus) {
+        if (injectListingFocus && !buildingFocus) {
             const previousUnitFocus = conversationUnitFocus.get(userKey) || null;
             unitFocus = resolveConversationUnitFocus(projects, message, previousUnitFocus);
 
@@ -237,7 +242,7 @@ exports.getReply = async (req, res) => {
         }
 
         const activeFocus = buildingFocus || unitFocus;
-        if (!comparisonQuestion && !ignoreListingFocus) {
+        if (injectListingFocus) {
             rememberListingFocus(userKey, message, buildingFocus, unitFocus, pageUrl);
         }
 
@@ -246,7 +251,7 @@ exports.getReply = async (req, res) => {
             unitSummary: unitFocus?.summary || '',
             companyContact,
             preferencesBlock: formatPreferencesBlock(clientPreferences),
-            comparisonGroundTruth: formatComparisonGroundTruth(comparisonTruth),
+            comparisonGroundTruth: formatInventoryGroundTruth(comparisonTruth),
         });
 
         if (!conversations.has(userKey)) {
@@ -423,14 +428,17 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
     const clientPreferences = getClientPreferences(userKey);
 
     const comparisonQuestion = isInventoryComparisonQuestion(message, projects);
-    const ignoreListingFocus = shouldIgnoreListingFocus(message, projects);
+    const petQuestion = isPetAvailabilityQuestion(message);
+    const injectListingFocus = shouldInjectListingFocus(message, projects);
     const comparisonTruth = comparisonQuestion
         ? resolveInventoryComparisonGroundTruth(projects, message, clientPreferences)
-        : null;
+        : (petQuestion
+            ? resolvePetFriendlyGroundTruth(projects, message, clientPreferences)
+            : null);
     const previousBuildingFocus = conversationBuildingFocus.get(userKey) || null;
-    const buildingFocus = (comparisonQuestion || ignoreListingFocus)
-        ? null
-        : resolveConversationBuildingFocus(projects, message, previousBuildingFocus);
+    const buildingFocus = injectListingFocus
+        ? resolveConversationBuildingFocus(projects, message, previousBuildingFocus)
+        : null;
 
     if (buildingFocus) {
         conversationBuildingFocus.set(userKey, { buildingRef: buildingFocus.buildingRef });
@@ -438,7 +446,7 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
     }
 
     let unitFocus = null;
-    if (!comparisonQuestion && !ignoreListingFocus && !buildingFocus) {
+    if (injectListingFocus && !buildingFocus) {
         const previousUnitFocus = conversationUnitFocus.get(userKey) || null;
         unitFocus = resolveConversationUnitFocus(projects, message, previousUnitFocus);
 
@@ -448,7 +456,7 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
     }
 
     const activeFocus = buildingFocus || unitFocus;
-    if (!comparisonQuestion && !ignoreListingFocus) {
+    if (injectListingFocus) {
         rememberListingFocus(userKey, message, buildingFocus, unitFocus, pageUrl);
     }
 
@@ -457,7 +465,7 @@ exports.continueAfterQuotaVerification = async (userKey, pageUrl = '') => {
         unitSummary: unitFocus?.summary || '',
         companyContact,
         preferencesBlock: formatPreferencesBlock(clientPreferences),
-        comparisonGroundTruth: formatComparisonGroundTruth(comparisonTruth),
+        comparisonGroundTruth: formatInventoryGroundTruth(comparisonTruth),
     });
     chatHistory[0] = { role: 'system', content: systemContent };
 

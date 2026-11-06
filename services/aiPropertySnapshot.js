@@ -1,3 +1,9 @@
+/**
+ * Hybrid AI inventory contract:
+ * - Always dump the full catalog as text (Messenger-era model) for general Q&A.
+ * - Node only computes Ground-truth for clear ranking/filter questions (most/least/cheapest…).
+ * - Listing focus is soft: inject only for follow-ups, never for broad inventory/rankings.
+ */
 const { getPublicPropertyUrl, getPublicUnitUrl, getUnitRef } = require('./aiUnitFocus');
 const { getBuildingRef, getPublicBuildingUrl } = require('./aiBuildingFocus');
 const { appendDeveloperAiContext, formatDeveloperAiLines } = require('./aiDeveloperContext');
@@ -64,9 +70,16 @@ function formatDateValue(value) {
     }
 }
 
+function formatBooleanYesNo(value) {
+    if (value === true) return 'Yes';
+    if (value === false) return 'No';
+    return null;
+}
+
 function pushField(parts, label, value, { money = false, date = false } = {}) {
     if (value == null || value === '') return;
     let formatted = value;
+    if (typeof value === 'boolean') formatted = formatBooleanYesNo(value);
     if (money) formatted = formatMoney(value);
     if (date) formatted = formatDateValue(value);
     if (formatted == null || formatted === '') return;
@@ -273,6 +286,7 @@ function collectComparableUnits(projects) {
                     monthlyRent: Number(unit.monthly_rent),
                     bedrooms: unit.bedrooms == null ? null : Number(unit.bedrooms),
                     petsAllowed: unit.is_pet_allowed === true,
+                    petSize: String(unit.allowed_pet_size || '').trim() || null,
                     unitRef: getUnitRef(unit),
                     unitPage: getPublicUnitUrl(project, getUnitRef(unit)),
                     isStudio: isStudioUnitType(unit.unit_type),
@@ -285,15 +299,6 @@ function collectComparableUnits(projects) {
     }
 
     return entries;
-}
-
-function formatRankedUnitLine(entry, priceLabel, priceValue) {
-    const room = entry.roomNumber ? `Room ${entry.roomNumber}` : 'Room n/a';
-    const city = entry.city ? ` | City: ${entry.city}` : '';
-    const developer = entry.developer ? ` | Developer: ${entry.developer}` : '';
-    const address = entry.address ? ` | Address: ${entry.address}` : '';
-    const page = entry.unitPage ? ` | Unit Page: ${entry.unitPage}` : '';
-    return `- ${entry.unitType} | ${room} | ${entry.buildingName} | ${entry.projectName}${city}${developer}${address} | ${priceLabel}: ${formatMoney(priceValue)} | Unit Ref (internal): ${entry.unitRef}${page}`;
 }
 
 function unitMatchesBedrooms(entry, bedrooms) {
@@ -324,24 +329,6 @@ function unitMatchesUnitTypeName(entry, unitTypeName) {
     const haystack = normalizePlaceName(entry.unitType);
     if (!needle || !haystack) return false;
     return haystack === needle || haystack.includes(needle) || needle.includes(haystack);
-}
-
-function inferBedroomCount(entry) {
-    if (entry.isStudio || entry.bedrooms === 0) return 0;
-    if (entry.bedrooms != null && Number.isFinite(Number(entry.bedrooms))) {
-        return Number(entry.bedrooms);
-    }
-    const match = String(entry.unitType || '').match(/\b(\d+)\s*[- ]?(?:br|bed(?:room)?s?)\b/i);
-    if (match) return Number(match[1]);
-    return null;
-}
-
-function collectDistinctBedroomCounts(units) {
-    return [...new Set(
-        (units || [])
-            .map((entry) => inferBedroomCount(entry))
-            .filter((value) => value != null && Number.isFinite(value)),
-    )].sort((a, b) => a - b);
 }
 
 function collectDistinctUnitTypes(units) {
@@ -466,103 +453,9 @@ function unitMatchesFilter(entry, filter = {}) {
     return true;
 }
 
-function rankedSaleByFilter(units, filter) {
-    return units
-        .filter((entry) => (
-            entry.listingType === 'sale'
-            && Number.isFinite(entry.salePrice)
-            && entry.salePrice > 0
-            && unitMatchesFilter(entry, filter)
-        ))
-        .sort((a, b) => b.salePrice - a.salePrice);
-}
-
-function rankedRentByFilter(units, filter) {
-    return units
-        .filter((entry) => (
-            entry.listingType === 'rent'
-            && Number.isFinite(entry.monthlyRent)
-            && entry.monthlyRent > 0
-            && unitMatchesFilter(entry, filter)
-        ))
-        .sort((a, b) => b.monthlyRent - a.monthlyRent);
-}
-
 function bedroomLabel(bedrooms) {
     if (bedrooms === 0) return 'Studio';
     return `${bedrooms} BR`;
-}
-
-function filterLabel(filter = {}) {
-    if (filter.wantStudio || filter.bedrooms === 0) return 'Studio';
-    if (filter.bedrooms != null) return bedroomLabel(filter.bedrooms);
-    if (filter.unitTypeName) return filter.unitTypeName;
-    return 'All types';
-}
-
-function appendRankedSection(lines, title, entries, priceLabel, priceValueFn) {
-    lines.push(title);
-    if (!entries.length) {
-        lines.push('- (none)');
-        return;
-    }
-    lines.push(
-        ...entries.map((entry) => formatRankedUnitLine(entry, priceLabel, priceValueFn(entry))),
-    );
-}
-
-function buildPriceComparisonIndex(projects, { limit = 6 } = {}) {
-    // Keep this compact — ranking questions use Ground-truth blocks.
-    // A huge index crowds out normal property details in the model context.
-    const units = collectComparableUnits(projects);
-    const bedroomCounts = collectDistinctBedroomCounts(units);
-
-    const saleUnits = units
-        .filter((entry) => entry.listingType === 'sale' && Number.isFinite(entry.salePrice) && entry.salePrice > 0)
-        .sort((a, b) => b.salePrice - a.salePrice)
-        .slice(0, limit);
-
-    const rentUnits = units
-        .filter((entry) => entry.listingType === 'rent' && Number.isFinite(entry.monthlyRent) && entry.monthlyRent > 0)
-        .sort((a, b) => b.monthlyRent - a.monthlyRent)
-        .slice(0, limit);
-
-    const lines = [
-        'Price comparison index (compact backup — Ground-truth inventory answer wins when present):',
-    ];
-
-    appendRankedSection(
-        lines,
-        'All sale units by Sale Price (highest first):',
-        saleUnits,
-        'Sale Price',
-        (entry) => entry.salePrice,
-    );
-    appendRankedSection(
-        lines,
-        'All rent units by Monthly Rent (highest first):',
-        rentUnits,
-        'Monthly Rent',
-        (entry) => entry.monthlyRent,
-    );
-
-    for (const bedrooms of bedroomCounts) {
-        const filter = { wantStudio: bedrooms === 0, bedrooms, unitTypeName: null };
-        const label = filterLabel(filter);
-        appendRankedSection(
-            lines,
-            `${label} sale top prices:`,
-            rankedSaleByFilter(units, filter).slice(0, 3),
-            'Sale Price',
-            (entry) => entry.salePrice,
-        );
-    }
-
-    lines.push(
-        'Notes: For ranking questions, prefer Ground-truth. Match ANY unit type/bedroom count from the latest question. Never substitute another city or type.',
-    );
-
-    return `${lines.join('\n')}\n`;
 }
 
 function isInventoryComparisonQuestion(message, projectsOrUnits = null) {
@@ -583,15 +476,9 @@ function isInventoryComparisonQuestion(message, projectsOrUnits = null) {
     return Boolean(extractUnitTypeNameFilter(text, unitTypes, {}));
 }
 
-/**
- * Broad inventory / discovery questions should search the full snapshot,
- * not get trapped by an earlier unit/building focus.
- */
-function shouldIgnoreListingFocus(message, projects = []) {
+function isBroadInventoryQuestion(message) {
     const text = String(message || '').trim();
     if (!text) return false;
-
-    if (isInventoryComparisonQuestion(text, projects)) return true;
 
     if (/\b(this|that)\s+(unit|listing|property|building|room)\b/i.test(text)) {
         return false;
@@ -602,6 +489,37 @@ function shouldIgnoreListingFocus(message, projects = []) {
         || /\b(?:units?|properties|listings|condos?|apartments?)\s+(?:in|within|around)\s+/i.test(text)
         || /\b(?:in|within|around)\s+(?:cebu|pasay|makati|taguig|manila|quezon|bgc|ortigas)\b/i.test(text)
     );
+}
+
+/**
+ * Pet / dog / cat availability questions need Node filtering — GPT often ignores Pets Allowed: No.
+ */
+function isPetAvailabilityQuestion(message) {
+    const text = String(message || '').trim();
+    if (!text) return false;
+
+    if (/\bpet[- ]?friendly\b/i.test(text)) return true;
+    if (/\b(dogs?|cats?|pets?)\b/i.test(text)
+        && /\b(allow|allows|allowed|friendly|ok|okay|can i|do you have|any|which|looking for)\b/i.test(text)) {
+        return true;
+    }
+    return /\b(allows?|allow)\s+(a\s+)?(dog|cat|pet)s?\b/i.test(text);
+}
+
+/**
+ * Soft focus: inject only for follow-ups about the current listing.
+ * Rankings, pet filters, and broad inventory always use the full snapshot.
+ */
+function shouldInjectListingFocus(message, projects = []) {
+    if (isInventoryComparisonQuestion(message, projects)) return false;
+    if (isPetAvailabilityQuestion(message)) return false;
+    if (isBroadInventoryQuestion(message)) return false;
+    return true;
+}
+
+/** @deprecated Prefer shouldInjectListingFocus — kept for callers that still use the ignore name. */
+function shouldIgnoreListingFocus(message, projects = []) {
+    return !shouldInjectListingFocus(message, projects);
 }
 
 function normalizePlaceName(value) {
@@ -771,12 +689,85 @@ Tell the client clearly that nothing matches those filters. Do not substitute a 
 - City: ${entry.city || 'n/a'}
 - Developer: ${entry.developer || 'n/a'}
 - Address: ${entry.address || 'n/a'}
-- Pets allowed: ${entry.petsAllowed ? 'yes' : 'no'}
+- Pets allowed: ${entry.petsAllowed ? 'Yes' : 'No'}
 - ${priceLabel}: ${formatMoney(priceValue)}
 - Unit Page: ${entry.unitPage || 'n/a'}
 Present this in natural language for the client. Include project, city, developer, address (if available), building, room, unit type, exact price, and the Unit Page as a markdown link. Never mention Unit Ref.
 
 `;
+}
+
+function resolvePetFriendlyGroundTruth(projects, message, preferences = {}, { limit = 8 } = {}) {
+    if (!isPetAvailabilityQuestion(message)) return null;
+
+    const units = collectComparableUnits(projects);
+    const text = String(message || '');
+    const prefs = preferences || {};
+    const cities = [...new Set(units.map((entry) => entry.city).filter(Boolean))];
+    const cityFilter = extractCityFilter(text, cities) || prefs.city || null;
+    const unitFilter = extractUnitFilter(text, units, prefs);
+
+    let candidates = units.filter((entry) => entry.petsAllowed === true);
+    if (cityFilter) {
+        candidates = candidates.filter(
+            (entry) => normalizePlaceName(entry.city) === normalizePlaceName(cityFilter),
+        );
+    }
+    candidates = candidates.filter((entry) => unitMatchesFilter(entry, unitFilter));
+
+    // Prefer units that already have a pet-size note when the client names dogs/cats.
+    if (/\b(dogs?|cats?)\b/i.test(text)) {
+        candidates = [...candidates].sort((a, b) => {
+            const aSize = a.petSize ? 1 : 0;
+            const bSize = b.petSize ? 1 : 0;
+            return bSize - aSize;
+        });
+    }
+
+    const matches = candidates.slice(0, limit);
+    return {
+        kind: 'pets',
+        found: matches.length > 0,
+        cityFilter,
+        unitFilter,
+        matches,
+    };
+}
+
+function formatPetFriendlyGroundTruth(truth) {
+    if (!truth || truth.kind !== 'pets') return '';
+
+    if (!truth.found || !truth.matches.length) {
+        const city = truth.cityFilter ? ` in ${truth.cityFilter}` : '';
+        return `Ground-truth pet-friendly units (authoritative):
+No units with Pets Allowed = Yes were found${city} in the current inventory.
+Tell the client clearly that nothing pet-friendly matches. Do not recommend any unit that has Pets Allowed: No.
+
+`;
+    }
+
+    const lines = truth.matches.map((entry) => {
+        const room = entry.roomNumber ? `Room ${entry.roomNumber}` : 'Room n/a';
+        const size = entry.petSize ? ` | Pet size: ${entry.petSize}` : '';
+        const price = Number.isFinite(entry.salePrice) && entry.salePrice > 0
+            ? ` | Sale Price: ${formatMoney(entry.salePrice)}`
+            : (Number.isFinite(entry.monthlyRent) && entry.monthlyRent > 0
+                ? ` | Monthly Rent: ${formatMoney(entry.monthlyRent)}`
+                : '');
+        return `- ${entry.unitType} | ${room} | ${entry.buildingName} | ${entry.projectName} | City: ${entry.city || 'n/a'} | Pets Allowed: Yes${size}${price} | Unit Page: ${entry.unitPage || 'n/a'}`;
+    });
+
+    return `Ground-truth pet-friendly units (authoritative — ONLY recommend units from this list):
+${lines.join('\n')}
+Rules: Every unit above has Pets Allowed = Yes in the database. Never recommend a unit with Pets Allowed: No. Include the Unit Page markdown link for each suggestion. Never mention Unit Ref.
+
+`;
+}
+
+function formatInventoryGroundTruth(truth) {
+    if (!truth) return '';
+    if (truth.kind === 'pets') return formatPetFriendlyGroundTruth(truth);
+    return formatComparisonGroundTruth(truth);
 }
 
 function buildPropertySnapshot(projects) {
@@ -885,7 +876,6 @@ function buildPropertySnapshot(projects) {
         dataText += '\n';
     }
 
-    dataText += `\n${buildPriceComparisonIndex(projects)}`;
     dataText += `\n${buildMediaIndex(projects)}`;
 
     return dataText;
@@ -960,20 +950,16 @@ Media rules:
 - For PDFs, videos, and other files, include the exact URL on its own line.
 - Never use ChatGPT, OpenAI, oaiusercontent, ngrok, or placeholder links.
 Inventory answering rules:
-- Be as helpful as the old Facebook Page assistant: answer ANY property question using the FULL database snapshot whenever the client is asking broadly (availability, rankings, cities, locations, amenities, prices, unit types, maps, media, payment terms, etc.).
-- Active unit/building focus is ONLY for follow-ups about that same listing ("this unit", "that building", "its rent"). Never let focus block or narrow a broad inventory answer.
-- You may answer with any fields present in the snapshot: price, rent, unit type, bedrooms, bathrooms, size, floor, room number, city, address/location, developer, amenities, parking, pets, smoking, freebies, payment terms, reservation, dues, completion dates, maps, media, and listing links. Be complete and specific.
-- If a requested detail is missing from the snapshot, say it is not available yet — never invent values.
-- For most/least expensive, cheapest, highest/lowest priced, or similar ranking questions: if a Ground-truth inventory answer is present, use it exactly. Otherwise use the Price comparison index. Do NOT answer ranking questions from Active unit focus alone.
-- Support ANY unit type in inventory: studio, 1BR/2BR/3BR+, SOHO, Suite, Penthouse, loft, named types, etc. Treat "SOHO - Studio" / types containing "Studio" as studio (0 bedrooms). Treat "1BR", "1 BR", and "1 bedroom" as the same 1-bedroom filter; same pattern for every bedroom count.
-- When the client names a bedroom count or unit type in a ranking question, filter to that exact type before choosing the winner. Do not substitute a different bedroom count or unit type.
-- If the client specifies a city (examples: "Cebu City only", "in Cebu", "preferably within Cebu City"), filter to that city. Never return a unit from another city.
-- Reuse Known client preferences across turns. If they switch city/type/budget ("actually", "instead", "switch to"), follow the latest message and stop using old conflicting preferences.
-- When giving ranking or unit answers, always include: unit type, bedrooms (if known), room number, building, project/property name, city, developer (if available), address/location (if available), exact Sale Price or rent, and the Unit Page link.
-- When asked for location, address, Google Earth / Maps / map location, share the exact address and Google Earth / Google Maps URLs from the snapshot (or active focus). Prefer markdown links with friendly text (example: [Open in Google Earth](url)).
-- Never reveal private owner/landlord identity or private owner contact numbers/emails. Use Mr. Boss Realty company contact instead when outreach is needed.
-- For private properties, keep using the public display name ("Private Property") and never expose owner identity.
-- Do NOT tell the client that OTP or privacy verification is required — the website handles that separately after a question limit.
+- Default behavior (Messenger-era): answer ANY property question from the FULL database snapshot — prices, types, cities, maps, amenities, media, payment terms, availability, and more. Be complete and specific.
+- Active unit/building focus is only a hint for follow-ups about that same listing. Never let it block or narrow a broad inventory answer.
+- If a Ground-truth inventory or pet-friendly block is present, use ONLY those units/facts. Never recommend a unit with Pets Allowed: No when the client asks about dogs, cats, or pets.
+- If a detail is missing from the snapshot, say it is not available yet — never invent values.
+- Reuse Known client preferences across turns. If they switch city/type/budget ("actually", "instead", "switch to"), follow the latest message.
+- When naming a specific unit, include unit type, room, building, project, city, price/rent, and the Unit Page link when available.
+- When asked for location or maps, share the snapshot Address and Google Earth / Google Maps URLs as markdown links.
+- Never reveal private owner/landlord identity or private owner contact details. Use Mr. Boss Realty company contact instead.
+- For private properties, keep the public display name ("Private Property") and never expose owner identity.
+- Do NOT tell the client that OTP or privacy verification is required — the website handles that separately.
 Developer context rules:
 - When Developer Website or Developer Notes appear in the snapshot or active focus block, treat them as internal notes that help the AI answer questions about that property.
 - Developer Notes may include sample computations, payment illustrations, or external links — use them when relevant. Present sample math as illustrative unless the notes clearly state it is official.
@@ -989,14 +975,18 @@ module.exports = {
     isShareableMediaUrl,
     buildPropertySnapshot,
     buildSystemContent,
-    buildPriceComparisonIndex,
     isInventoryComparisonQuestion,
+    isPetAvailabilityQuestion,
+    shouldInjectListingFocus,
     shouldIgnoreListingFocus,
     extractBedroomFilter,
     extractUnitFilter,
     unitMatchesBedrooms,
     unitMatchesFilter,
     resolveInventoryComparisonGroundTruth,
+    resolvePetFriendlyGroundTruth,
     formatComparisonGroundTruth,
+    formatPetFriendlyGroundTruth,
+    formatInventoryGroundTruth,
     formatDeveloperAiLines,
 };
