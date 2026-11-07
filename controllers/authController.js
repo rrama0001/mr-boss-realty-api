@@ -10,15 +10,45 @@ exports.register = async (req, res) => {
     const fullName = String(req.body.full_name || '').trim();
     const email = String(req.body.email || '').trim().toLowerCase();
     const password = String(req.body.password || '');
+    const passwordConfirm = String(
+      req.body.passwordConfirm || req.body.password_confirm || '',
+    );
     const phone = String(req.body.phone || '').trim() || null;
-    const role = String(req.body.role || 'agent').trim().toLowerCase();
+    const notifyEmail = req.body.notify_email === true || req.body.notify_email === 'true';
+    const notifySms = req.body.notify_sms === true || req.body.notify_sms === 'true';
 
-    if (!fullName || !email || !password) {
-      return res.status(400).json({ error: 'Full name, email, and password are required.' });
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required.' });
     }
 
-    if (!['admin', 'agent', 'user'].includes(role)) {
-      return res.status(400).json({ error: 'Role must be admin, agent, or user.' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
+    }
+
+    if (!password) {
+      return res.status(400).json({ error: 'Password is required.' });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    }
+
+    if (password !== passwordConfirm) {
+      return res.status(400).json({ error: 'Passwords do not match.' });
+    }
+
+    if (!fullName) {
+      return res.status(400).json({ error: 'Full name is required.' });
+    }
+
+    const existing = await prisma.users.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+    if (existing) {
+      return res.status(409).json({
+        error: 'An account with this email already exists. Please log in instead.',
+      });
     }
 
     const hashed = await bcrypt.hash(password, 10);
@@ -28,9 +58,11 @@ exports.register = async (req, res) => {
         email,
         password: hashed,
         phone,
-        role,
-        notify_email: false,
-        notify_sms: false,
+        // Public website signup is always a visitor account — never admin/agent.
+        role: 'user',
+        can_login: true,
+        notify_email: notifyEmail,
+        notify_sms: Boolean(phone) && notifySms,
         notify_facebook: false,
       },
       select: {
@@ -46,9 +78,23 @@ exports.register = async (req, res) => {
         created_at: true,
       },
     });
-    res.json(user);
+
+    await new Promise((resolve, reject) => {
+      req.login(user, (err) => (err ? reject(err) : resolve()));
+    });
+
+    return res.status(201).json({
+      message: 'Account created',
+      user,
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (err?.code === 'P2002') {
+      return res.status(409).json({
+        error: 'An account with this email already exists. Please log in instead.',
+      });
+    }
+    console.error('Register error:', err);
+    return res.status(500).json({ error: 'Unable to create your account right now.' });
   }
 };
 
